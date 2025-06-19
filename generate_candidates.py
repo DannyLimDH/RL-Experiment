@@ -25,8 +25,9 @@ def generate_responses(
     top_p: float = 0.9,
     use_bf16: bool = True,
     batch_size: int = 1,
-) -> List[str]:
-    """Generate a single response for each input using the specified model.
+    num_candidates: int = 3,
+) -> List[List[str]]:
+    """Generate one or more responses for each input using the specified model.
 
     Parameters
     ----------
@@ -44,6 +45,8 @@ def generate_responses(
         Load model weights in ``bfloat16`` when running on CUDA.
     batch_size : int, optional
         How many prompts to process at once.
+    num_candidates : int, optional
+        How many responses to generate for each prompt.
     """
 
     tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -71,7 +74,7 @@ def generate_responses(
     )
 
     total = len(inputs)
-    responses = []
+    responses: List[List[str]] = []
 
     def batch_iter(seq, size):
         for i in range(0, len(seq), size):
@@ -89,12 +92,18 @@ def generate_responses(
             do_sample=True,
             temperature=temperature,
             top_p=top_p,
+            num_return_sequences=num_candidates,
         )
         for prompt, out in zip(batch, outputs):
-            result = out["generated_text"]
-            if result.startswith(prompt):
-                result = result[len(prompt) :]
-            responses.append(result.strip())
+            if not isinstance(out, list):
+                out = [out]
+            cands = []
+            for o in out:
+                result = o["generated_text"]
+                if result.startswith(prompt):
+                    result = result[len(prompt) :]
+                cands.append(result.strip())
+            responses.append(cands)
         processed += len(batch)
         if not tqdm:
             print(f"Generated {processed}/{total} responses", end="\r")
@@ -129,6 +138,7 @@ def main():
         help="Disable bfloat16 model weights even if CUDA is available",
     )
     parser.add_argument("--batch-size", type=int, default=1, help="Batch size for generation")
+    parser.add_argument("--num-candidates", type=int, default=3, help="Number of responses to generate per input")
     args = parser.parse_args()
 
     inputs = load_inputs(args.data)
@@ -140,15 +150,16 @@ def main():
         top_p=args.top_p,
         use_bf16=not args.no_bf16,
         batch_size=args.batch_size,
+        num_candidates=args.num_candidates,
     )
 
+    records = []
+    for inp, outs in zip(inputs, responses):
+        for r in outs:
+            records.append({"input": inp, "output": r})
+
     with open(args.output, "w", encoding="utf-8") as f:
-        json.dump(
-            [{"input": i, "output": r} for i, r in zip(inputs, responses)],
-            f,
-            ensure_ascii=False,
-            indent=2,
-        )
+        json.dump(records, f, ensure_ascii=False, indent=2)
 
 
 if __name__ == "__main__":
