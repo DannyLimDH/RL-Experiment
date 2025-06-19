@@ -23,7 +23,8 @@ def generate_responses(
     max_new_tokens: int = 100,
     temperature: float = 0.7,
     top_p: float = 0.9,
-    use_fp16: bool = True,
+    use_bf16: bool = True,
+    batch_size: int = 1,
 ) -> List[str]:
     """Generate a single response for each input using the specified model.
 
@@ -39,15 +40,25 @@ def generate_responses(
         Sampling temperature.
     top_p : float, optional
         Top-p sampling parameter.
-    use_fp16 : bool, optional
-        Load model weights in ``float16`` when running on CUDA.
+    use_bf16 : bool, optional
+        Load model weights in ``bfloat16`` when running on CUDA.
+    batch_size : int, optional
+        How many prompts to process at once.
     """
 
     tokenizer = AutoTokenizer.from_pretrained(model_name)
 
+    if torch.cuda.is_available():
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        try:
+            torch.set_float32_matmul_precision("high")
+        except Exception:
+            pass
+
     model_kwargs = {}
-    if use_fp16 and torch.cuda.is_available():
-        model_kwargs["torch_dtype"] = torch.float16
+    if use_bf16 and torch.cuda.is_available():
+        model_kwargs["torch_dtype"] = torch.bfloat16
 
     model = AutoModelForCausalLM.from_pretrained(model_name, **model_kwargs)
 
@@ -61,34 +72,33 @@ def generate_responses(
 
     total = len(inputs)
     responses = []
+
+    def batch_iter(seq, size):
+        for i in range(0, len(seq), size):
+            yield seq[i : i + size]
+
+    iterator = batch_iter(inputs, batch_size)
     if tqdm:
-        iterator = tqdm(inputs, desc="generating", unit="req")
-        for prompt in iterator:
-            result = generator(
-                prompt,
-                max_new_tokens=max_new_tokens,
-                do_sample=True,
-                temperature=temperature,
-                top_p=top_p,
-            )[0]["generated_text"]
+        iterator = tqdm(iterator, desc="generating", total=(total + batch_size - 1) // batch_size, unit="batch")
 
+    processed = 0
+    for batch in iterator:
+        outputs = generator(
+            batch,
+            max_new_tokens=max_new_tokens,
+            do_sample=True,
+            temperature=temperature,
+            top_p=top_p,
+        )
+        for prompt, out in zip(batch, outputs):
+            result = out["generated_text"]
             if result.startswith(prompt):
                 result = result[len(prompt) :]
             responses.append(result.strip())
-    else:
-        for idx, prompt in enumerate(inputs, 1):
-            result = generator(
-                prompt,
-                max_new_tokens=max_new_tokens,
-                do_sample=True,
-                temperature=temperature,
-                top_p=top_p,
-            )[0]["generated_text"]
-
-            if result.startswith(prompt):
-                result = result[len(prompt) :]
-            responses.append(result.strip())
-            print(f"Generated {idx}/{total} responses", end="\r")
+        processed += len(batch)
+        if not tqdm:
+            print(f"Generated {processed}/{total} responses", end="\r")
+    if not tqdm:
         print()
     return responses
 
@@ -114,10 +124,11 @@ def main():
     parser.add_argument("--temperature", type=float, default=0.7, help="Sampling temperature")
     parser.add_argument("--top-p", type=float, default=0.9, help="Top-p sampling")
     parser.add_argument(
-        "--no-fp16",
+        "--no-bf16",
         action="store_true",
-        help="Disable fp16 model weights even if CUDA is available",
+        help="Disable bfloat16 model weights even if CUDA is available",
     )
+    parser.add_argument("--batch-size", type=int, default=1, help="Batch size for generation")
     args = parser.parse_args()
 
     inputs = load_inputs(args.data)
@@ -127,7 +138,8 @@ def main():
         max_new_tokens=args.max_new_tokens,
         temperature=args.temperature,
         top_p=args.top_p,
-        use_fp16=not args.no_fp16,
+        use_bf16=not args.no_bf16,
+        batch_size=args.batch_size,
     )
 
     with open(args.output, "w", encoding="utf-8") as f:
