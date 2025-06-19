@@ -1,0 +1,25 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# Virtual environment directories
+venv/
+env/
+ENV/
+*.venv/
+
+# Distribution/build directories
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Test and coverage directories
+.pytest_cache/
+coverage.xml
+*.cover
+*.py,cover
+
+# OS generated files
+.DS_Store
+Thumbs.db
