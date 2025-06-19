@@ -5,6 +5,11 @@ from typing import List
 from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 import torch
 
+try:
+    from tqdm import tqdm
+except Exception:  # pragma: no cover - tqdm is optional
+    tqdm = None
+
 
 def load_inputs(path: str) -> List[str]:
     """Load a list of input strings from the dataset JSON file."""
@@ -32,20 +37,37 @@ def generate_responses(
         device=device,
     )
 
+    total = len(inputs)
     responses = []
-    for prompt in inputs:
-        result = generator(
-            prompt,
-            max_new_tokens=max_new_tokens,
-            do_sample=True,
-            temperature=temperature,
-            top_p=top_p,
-        )[0]["generated_text"]
+    if tqdm:
+        iterator = tqdm(inputs, desc="generating", unit="req")
+        for prompt in iterator:
+            result = generator(
+                prompt,
+                max_new_tokens=max_new_tokens,
+                do_sample=True,
+                temperature=temperature,
+                top_p=top_p,
+            )[0]["generated_text"]
 
-        # Remove the prompt from the generated text if present
-        if result.startswith(prompt):
-            result = result[len(prompt) :]
-        responses.append(result.strip())
+            if result.startswith(prompt):
+                result = result[len(prompt) :]
+            responses.append(result.strip())
+    else:
+        for idx, prompt in enumerate(inputs, 1):
+            result = generator(
+                prompt,
+                max_new_tokens=max_new_tokens,
+                do_sample=True,
+                temperature=temperature,
+                top_p=top_p,
+            )[0]["generated_text"]
+
+            if result.startswith(prompt):
+                result = result[len(prompt) :]
+            responses.append(result.strip())
+            print(f"Generated {idx}/{total} responses", end="\r")
+        print()
     return responses
 
 
