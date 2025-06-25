@@ -81,43 +81,90 @@ def generate_responses(
     )
 
     dataset = Dataset.from_dict({"text": inputs})
-    if tqdm:
-        iterator = tqdm(total=len(inputs), desc="generating")
-    else:
-        iterator = None
-
-    outputs = generator(
-        dataset,
-        batch_size=batch_size,
-        max_new_tokens=max_new_tokens,
-        do_sample=True,
-        temperature=temperature,
-        top_p=top_p,
-        num_return_sequences=num_candidates,
-    )
 
     responses: List[List[str]] = []
     halfway = len(inputs) // 2
-    
-    for idx, (prompt, out) in enumerate(zip(inputs, outputs), start=1):
-        if iterator:
-            iterator.update(1)
-        if not isinstance(out, list):
-            out = [out]
-        cands = []
-        for o in out:
-            result = o["generated_text"]
-            if result.startswith(prompt):
-                result = result[len(prompt) :]
-            cands.append(result.strip())
-        responses.append(cands)
+    saved = False
 
-        if save_midway and idx == halfway:
-            records = []
-            for inp, outs in zip(inputs[:idx], responses):
-                for r in outs:
-                    records.append({"input": inp, "output": r})
-            with open("save.json", "w", encoding="utf-8") as f:
+    try:
+        outputs = generator(
+            dataset,
+            batch_size=batch_size,
+            max_new_tokens=max_new_tokens,
+            do_sample=True,
+            temperature=temperature,
+            top_p=top_p,
+            num_return_sequences=num_candidates,
+        )
+
+        iterator = tqdm(total=len(inputs), desc="generating") if tqdm else None
+        for idx, (prompt, out) in enumerate(zip(inputs, outputs), start=1):
+            if iterator:
+                iterator.update(1)
+            if not isinstance(out, list):
+                out = [out]
+            cands = []
+            for o in out:
+                result = o["generated_text"]
+                if result.startswith(prompt):
+                    result = result[len(prompt) :]
+                cands.append(result.strip())
+            responses.append(cands)
+            if save_midway and not saved and idx == halfway:
+                records = []
+                for inp, outs in zip(inputs[:idx], responses):
+                    for r in outs:
+                        records.append({"input": inp, "output": r})
+                with open("save.json", "w", encoding="utf-8") as f:
+                    json.dump(records, f, ensure_ascii=False, indent=2)
+                saved = True
+            iterator.close()
+    except TypeError:
+        def batch_iter(seq, size):
+            for i in range(0, len(seq), size):
+                yield seq[i : i + size]
+
+        batch_iterator = batch_iter(inputs, batch_size)
+        if tqdm:
+            batch_iterator = tqdm(
+                batch_iterator,
+                desc="generating",
+                total=(len(inputs) + batch_size - 1) // batch_size,
+                unit="batch",
+            )
+
+        idx = 0
+        for batch in batch_iterator:
+            outs = generator(
+                batch,
+                max_new_tokens=max_new_tokens,
+                do_sample=True,
+                temperature=temperature,
+                top_p=top_p,
+                num_return_sequences=num_candidates,
+            )
+            for prompt, out in zip(batch, outs):
+                idx += 1
+                if not isinstance(out, list):
+                    out = [out]
+                cands = []
+                for o in out:
+                    result = o["generated_text"]
+                    if result.startswith(prompt):
+                        result = result[len(prompt) :]
+                    cands.append(result.strip())
+                responses.append(cands)
+                if save_midway and not saved and idx == halfway:
+                    records = []
+                    for inp, outs in zip(inputs[:idx], responses):
+                        for r in outs:
+                            records.append({"input": inp, "output": r})
+                    with open("save.json", "w", encoding="utf-8") as f:
+                        json.dump(records, f, ensure_ascii=False, indent=2)
+                    saved = True
+        if tqdm:
+            batch_iterator.close()
+
                 json.dump(records, f, ensure_ascii=False, indent=2)
 
     if iterator:
