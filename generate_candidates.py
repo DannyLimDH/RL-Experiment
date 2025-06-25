@@ -27,6 +27,7 @@ def generate_responses(
     batch_size: int = 1,
     num_candidates: int = 3,
     quantize: str | None = None,
+
 ) -> List[List[str]]:
     """Generate one or more responses for each input using the specified model.
 
@@ -161,6 +162,7 @@ def main():
         choices=["8bit", "4bit"],
         help="Load model with bitsandbytes quantization",
     )
+
     args = parser.parse_args()
 
     inputs = load_inputs(args.data)
@@ -187,4 +189,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
