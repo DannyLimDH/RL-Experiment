@@ -3,7 +3,12 @@ from pathlib import Path
 from typing import List
 
 from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
+from datasets import Dataset
 import torch
+import os
+
+# Disable Torch Dynamo graph caching to avoid `RecompileLimitExceeded` errors
+os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
 
 try:
     from tqdm import tqdm
@@ -73,42 +78,37 @@ def generate_responses(
         device=device,
     )
 
-    total = len(inputs)
-    responses: List[List[str]] = []
-
-    def batch_iter(seq, size):
-        for i in range(0, len(seq), size):
-            yield seq[i : i + size]
-
-    iterator = batch_iter(inputs, batch_size)
+    dataset = Dataset.from_dict({"text": inputs})
     if tqdm:
-        iterator = tqdm(iterator, desc="generating", total=(total + batch_size - 1) // batch_size, unit="batch")
+        iterator = tqdm(total=len(inputs), desc="generating")
+    else:
+        iterator = None
 
-    processed = 0
-    for batch in iterator:
-        outputs = generator(
-            batch,
-            max_new_tokens=max_new_tokens,
-            do_sample=True,
-            temperature=temperature,
-            top_p=top_p,
-            num_return_sequences=num_candidates,
-        )
-        for prompt, out in zip(batch, outputs):
-            if not isinstance(out, list):
-                out = [out]
-            cands = []
-            for o in out:
-                result = o["generated_text"]
-                if result.startswith(prompt):
-                    result = result[len(prompt) :]
-                cands.append(result.strip())
-            responses.append(cands)
-        processed += len(batch)
-        if not tqdm:
-            print(f"Generated {processed}/{total} responses", end="\r")
-    if not tqdm:
-        print()
+    outputs = generator(
+        dataset,
+        batch_size=batch_size,
+        max_new_tokens=max_new_tokens,
+        do_sample=True,
+        temperature=temperature,
+        top_p=top_p,
+        num_return_sequences=num_candidates,
+    )
+
+    responses: List[List[str]] = []
+    for prompt, out in zip(inputs, outputs):
+        if iterator:
+            iterator.update(1)
+        if not isinstance(out, list):
+            out = [out]
+        cands = []
+        for o in out:
+            result = o["generated_text"]
+            if result.startswith(prompt):
+                result = result[len(prompt) :]
+            cands.append(result.strip())
+        responses.append(cands)
+    if iterator:
+        iterator.close()
     return responses
 
 
