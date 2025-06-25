@@ -2,7 +2,12 @@ import json
 from pathlib import Path
 from typing import List
 
-from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
+from transformers import (
+    AutoTokenizer,
+    AutoModelForCausalLM,
+    BitsAndBytesConfig,
+    pipeline,
+)
 import torch
 
 try:
@@ -40,21 +45,30 @@ def generate_responses(
     max_new_tokens : int, optional
         Number of tokens to generate.
     temperature : float, optional
-        Sampling temperature.
-    top_p : float, optional
-        Top-p sampling parameter.
-    use_bf16 : bool, optional
-        Load model weights in ``bfloat16`` when running on CUDA.
-    batch_size : int, optional
-        How many prompts to process at once.
-    num_candidates : int, optional
-        How many responses to generate for each prompt.
-    quantize : {"8bit", "4bit"} or None, optional
-        If set, load the model using bitsandbytes quantization.
-    """
 
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-
+    quant_config = None
+            quant_config = BitsAndBytesConfig(load_in_8bit=True)
+            quant_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=torch.bfloat16,
+                bnb_4bit_use_double_quant=True,
+                bnb_4bit_quant_type="nf4",
+        model_kwargs["quantization_config"] = quant_config
+    if quantize:
+        generator = pipeline(
+            "text-generation",
+            model=model,
+            tokenizer=tokenizer,
+            device_map="auto",
+        )
+    else:
+        device = 0 if torch.cuda.is_available() else -1
+        generator = pipeline(
+            "text-generation",
+            model=model,
+            tokenizer=tokenizer,
+            device=device,
+        )
     if torch.cuda.is_available():
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
