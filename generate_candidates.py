@@ -7,8 +7,8 @@ from datasets import Dataset
 import torch
 import os
 
-# Disable Torch Dynamo graph caching to avoid `RecompileLimitExceeded` errors
-os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
+import torch._dynamo
+torch._dynamo.config.cache_size_limit = 256 
 
 try:
     from tqdm import tqdm
@@ -98,6 +98,7 @@ def generate_responses(
 
     responses: List[List[str]] = []
     halfway = len(inputs) // 2
+    
     for idx, (prompt, out) in enumerate(zip(inputs, outputs), start=1):
         if iterator:
             iterator.update(1)
@@ -110,6 +111,7 @@ def generate_responses(
                 result = result[len(prompt) :]
             cands.append(result.strip())
         responses.append(cands)
+
         if save_midway and idx == halfway:
             records = []
             for inp, outs in zip(inputs[:idx], responses):
@@ -117,6 +119,7 @@ def generate_responses(
                     records.append({"input": inp, "output": r})
             with open("save.json", "w", encoding="utf-8") as f:
                 json.dump(records, f, ensure_ascii=False, indent=2)
+
     if iterator:
         iterator.close()
     return responses
