@@ -1,5 +1,11 @@
 # RL-Experiment
 
+This repository contains utilities for working with the Empathetic Dialogue dataset.
+
+- `generate_candidates.py` generates multiple candidate responses for each input prompt using a specified language model. Results are saved to `candidate.json` by default. The script supports optional 8-bit or 4-bit quantization via the `--quantize` flag.
+- `generate_preference_dataset.py` scores the original and candidate responses with `deepseek-ai/DeepSeek-R1-Distill-Llama-8B` to create a preference dataset named `LLMprefer.json` containing `prompt`, `chosen`, and `reject` field
+
+
 This project contains utilities for generating candidate responses for the Empathetic Dialogues dataset using Hugging Face models. The main script `generate_candidates.py` reads a `train.json` file containing conversation prompts and outputs a list of model generated replies.
 
 ## Installation

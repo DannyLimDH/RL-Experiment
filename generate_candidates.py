@@ -26,6 +26,8 @@ def generate_responses(
     use_bf16: bool = True,
     batch_size: int = 1,
     num_candidates: int = 3,
+    quantize: str | None = None,
+
 ) -> List[List[str]]:
     """Generate one or more responses for each input using the specified model.
 
@@ -47,6 +49,8 @@ def generate_responses(
         How many prompts to process at once.
     num_candidates : int, optional
         How many responses to generate for each prompt.
+    quantize : {"8bit", "4bit"} or None, optional
+        If set, load the model using bitsandbytes quantization.
     """
 
     tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -62,6 +66,20 @@ def generate_responses(
     model_kwargs = {}
     if use_bf16 and torch.cuda.is_available():
         model_kwargs["torch_dtype"] = torch.bfloat16
+    if quantize:
+        if quantize not in {"8bit", "4bit"}:
+            raise ValueError("quantize must be '8bit' or '4bit'")
+        if quantize == "8bit":
+            model_kwargs["load_in_8bit"] = True
+        else:
+            model_kwargs.update(
+                {
+                    "load_in_4bit": True,
+                    "bnb_4bit_compute_dtype": torch.bfloat16,
+                    "bnb_4bit_use_double_quant": True,
+                    "bnb_4bit_quant_type": "nf4",
+                }
+            )
 
     model = AutoModelForCausalLM.from_pretrained(model_name, **model_kwargs)
 
@@ -139,6 +157,12 @@ def main():
     )
     parser.add_argument("--batch-size", type=int, default=1, help="Batch size for generation")
     parser.add_argument("--num-candidates", type=int, default=3, help="Number of responses to generate per input")
+    parser.add_argument(
+        "--quantize",
+        choices=["8bit", "4bit"],
+        help="Load model with bitsandbytes quantization",
+    )
+
     args = parser.parse_args()
 
     inputs = load_inputs(args.data)
@@ -151,6 +175,7 @@ def main():
         use_bf16=not args.no_bf16,
         batch_size=args.batch_size,
         num_candidates=args.num_candidates,
+        quantize=args.quantize,
     )
 
     records = []
