@@ -3,7 +3,12 @@ from pathlib import Path
 from typing import List
 
 from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
+from datasets import Dataset
 import torch
+import os
+
+# Disable Torch Dynamo graph caching to avoid `RecompileLimitExceeded` errors
+os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
 
 try:
     from tqdm import tqdm
@@ -26,6 +31,8 @@ def generate_responses(
     use_bf16: bool = True,
     batch_size: int = 1,
     num_candidates: int = 3,
+    *,
+    save_midway: bool = True,
 ) -> List[List[str]]:
     """Generate one or more responses for each input using the specified model.
 
@@ -73,42 +80,45 @@ def generate_responses(
         device=device,
     )
 
-    total = len(inputs)
-    responses: List[List[str]] = []
-
-    def batch_iter(seq, size):
-        for i in range(0, len(seq), size):
-            yield seq[i : i + size]
-
-    iterator = batch_iter(inputs, batch_size)
+    dataset = Dataset.from_dict({"text": inputs})
     if tqdm:
-        iterator = tqdm(iterator, desc="generating", total=(total + batch_size - 1) // batch_size, unit="batch")
+        iterator = tqdm(total=len(inputs), desc="generating")
+    else:
+        iterator = None
 
-    processed = 0
-    for batch in iterator:
-        outputs = generator(
-            batch,
-            max_new_tokens=max_new_tokens,
-            do_sample=True,
-            temperature=temperature,
-            top_p=top_p,
-            num_return_sequences=num_candidates,
-        )
-        for prompt, out in zip(batch, outputs):
-            if not isinstance(out, list):
-                out = [out]
-            cands = []
-            for o in out:
-                result = o["generated_text"]
-                if result.startswith(prompt):
-                    result = result[len(prompt) :]
-                cands.append(result.strip())
-            responses.append(cands)
-        processed += len(batch)
-        if not tqdm:
-            print(f"Generated {processed}/{total} responses", end="\r")
-    if not tqdm:
-        print()
+    outputs = generator(
+        dataset,
+        batch_size=batch_size,
+        max_new_tokens=max_new_tokens,
+        do_sample=True,
+        temperature=temperature,
+        top_p=top_p,
+        num_return_sequences=num_candidates,
+    )
+
+    responses: List[List[str]] = []
+    halfway = len(inputs) // 2
+    for idx, (prompt, out) in enumerate(zip(inputs, outputs), start=1):
+        if iterator:
+            iterator.update(1)
+        if not isinstance(out, list):
+            out = [out]
+        cands = []
+        for o in out:
+            result = o["generated_text"]
+            if result.startswith(prompt):
+                result = result[len(prompt) :]
+            cands.append(result.strip())
+        responses.append(cands)
+        if save_midway and idx == halfway:
+            records = []
+            for inp, outs in zip(inputs[:idx], responses):
+                for r in outs:
+                    records.append({"input": inp, "output": r})
+            with open("save.json", "w", encoding="utf-8") as f:
+                json.dump(records, f, ensure_ascii=False, indent=2)
+    if iterator:
+        iterator.close()
     return responses
 
 
@@ -151,6 +161,7 @@ def main():
         use_bf16=not args.no_bf16,
         batch_size=args.batch_size,
         num_candidates=args.num_candidates,
+        save_midway=True,
     )
 
     records = []
