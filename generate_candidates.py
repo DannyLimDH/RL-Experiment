@@ -31,6 +31,8 @@ def generate_responses(
     use_bf16: bool = True,
     batch_size: int = 1,
     num_candidates: int = 3,
+    *,
+    save_midway: bool = True,
 ) -> List[List[str]]:
     """Generate one or more responses for each input using the specified model.
 
@@ -95,7 +97,9 @@ def generate_responses(
     )
 
     responses: List[List[str]] = []
-    for prompt, out in zip(inputs, outputs):
+    halfway = len(inputs) // 2
+    
+    for idx, (prompt, out) in enumerate(zip(inputs, outputs), start=1):
         if iterator:
             iterator.update(1)
         if not isinstance(out, list):
@@ -107,6 +111,15 @@ def generate_responses(
                 result = result[len(prompt) :]
             cands.append(result.strip())
         responses.append(cands)
+
+        if save_midway and idx == halfway:
+            records = []
+            for inp, outs in zip(inputs[:idx], responses):
+                for r in outs:
+                    records.append({"input": inp, "output": r})
+            with open("save.json", "w", encoding="utf-8") as f:
+                json.dump(records, f, ensure_ascii=False, indent=2)
+
     if iterator:
         iterator.close()
     return responses
@@ -151,6 +164,7 @@ def main():
         use_bf16=not args.no_bf16,
         batch_size=args.batch_size,
         num_candidates=args.num_candidates,
+        save_midway=True,
     )
 
     records = []
