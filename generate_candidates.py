@@ -7,8 +7,8 @@ from datasets import Dataset
 import torch
 import os
 
-# Disable Torch Dynamo graph caching to avoid `RecompileLimitExceeded` errors
-os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
+import torch._dynamo
+torch._dynamo.config.cache_size_limit = 256 
 
 try:
     from tqdm import tqdm
