@@ -10,7 +10,7 @@ import torch._dynamo
 torch._dynamo.config.cache_size_limit = 256
 
 DEFAULT_TEMPLATE = (
-    "You are an empathetic conversation partner. Reply to the following message:\n{input}\n"
+    "You are an empathetic conversation partner. Reply briefly to the following message:\n{input}\n"
 )
 
 try:
