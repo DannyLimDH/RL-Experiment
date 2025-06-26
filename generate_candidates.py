@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 from datasets import Dataset
@@ -8,7 +8,12 @@ import torch
 import os
 
 import torch._dynamo
-torch._dynamo.config.cache_size_limit = 256 
+torch._dynamo.config.cache_size_limit = 256
+
+DEFAULT_TEMPLATE = (
+    "You are an empathetic conversation partner. "
+    "Keep your response brief. Reply to the following message:\n{input}\n"
+)
 
 try:
     from tqdm import tqdm
@@ -36,14 +41,15 @@ def dump_records(path: str, prompts: List[str], responses: List[List[str]]) -> N
 
 def generate_responses(
     inputs: List[str],
+    *,
+    original_inputs: Optional[List[str]] = None,
     model_name: str = "google/gemma-3-1b-it",
-    max_new_tokens: int = 100,
+    max_new_tokens: int = 40,
     temperature: float = 0.7,
     top_p: float = 0.9,
     use_bf16: bool = True,
     batch_size: int = 1,
     num_candidates: int = 3,
-    *,
     save_midway: bool = True,
 ) -> List[List[str]]:
     """Generate one or more responses for each input using the specified model.
@@ -52,6 +58,8 @@ def generate_responses(
     ----------
     inputs : List[str]
         Prompts to feed into the model.
+    original_inputs : Optional[List[str]], optional
+        If provided, the unformatted prompts used when saving progress mid-way.
     model_name : str, optional
         Model checkpoint to load.
     max_new_tokens : int, optional
@@ -66,6 +74,10 @@ def generate_responses(
         How many prompts to process at once.
     num_candidates : int, optional
         How many responses to generate for each prompt.
+    
+    If ``save_midway`` is True, partial results are saved to ``save1.json``,
+    ``save2.json``, and ``save3.json`` when 1/4, 1/2, and 3/4 of the prompts
+    have been processed.
     """
 
     tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -95,8 +107,8 @@ def generate_responses(
     dataset = Dataset.from_dict({"text": inputs})
 
     responses: List[List[str]] = []
-    halfway = len(inputs) // 2
-    saved = False
+    quarter_points = [len(inputs) * i // 4 for i in range(1, 4)]
+    next_save = 0
 
     try:
         outputs = generator(
@@ -122,9 +134,13 @@ def generate_responses(
                     result = result[len(prompt) :]
                 cands.append(result.strip())
             responses.append(cands)
-            if save_midway and not saved and idx == halfway:
-                dump_records("save.json", inputs[:idx], responses)
-                saved = True
+            if save_midway and next_save < len(quarter_points) and idx == quarter_points[next_save]:
+                dump_records(
+                    f"save{next_save + 1}.json",
+                    (original_inputs or inputs)[:idx],
+                    responses,
+                )
+                next_save += 1
         if iterator:
             iterator.close()
     except TypeError:
@@ -162,9 +178,13 @@ def generate_responses(
                         result = result[len(prompt) :]
                     cands.append(result.strip())
                 responses.append(cands)
-                if save_midway and not saved and idx == halfway:
-                    dump_records("save.json", inputs[:idx], responses)
-                    saved = True
+                if save_midway and next_save < len(quarter_points) and idx == quarter_points[next_save]:
+                    dump_records(
+                        f"save{next_save + 1}.json",
+                        (original_inputs or inputs)[:idx],
+                        responses,
+                    )
+                    next_save += 1
         if tqdm:
             batch_iterator.close()
     return responses
@@ -187,7 +207,12 @@ def main():
         help="Where to write the candidate dataset",
     )
     parser.add_argument("--model", default="google/gemma-3-1b-it", help="Model to use for generation")
-    parser.add_argument("--max-new-tokens", type=int, default=100, help="Max tokens to generate")
+    parser.add_argument(
+        "--max-new-tokens",
+        type=int,
+        default=40,
+        help="Maximum tokens to generate for each reply",
+    )
     parser.add_argument("--temperature", type=float, default=0.7, help="Sampling temperature")
     parser.add_argument("--top-p", type=float, default=0.9, help="Top-p sampling")
     parser.add_argument(
@@ -197,11 +222,19 @@ def main():
     )
     parser.add_argument("--batch-size", type=int, default=1, help="Batch size for generation")
     parser.add_argument("--num-candidates", type=int, default=3, help="Number of responses to generate per input")
+    parser.add_argument(
+        "--template",
+        "--prompt-prefix",
+        dest="template",
+        default=DEFAULT_TEMPLATE,
+        help="Format string used to create the prompt; must contain '{input}'",
+    )
     args = parser.parse_args()
 
-    inputs = load_inputs(args.data)
+    raw_inputs = load_inputs(args.data)
+    prompts = [args.template.format(input=inp) for inp in raw_inputs]
     responses = generate_responses(
-        inputs,
+        prompts,
         model_name=args.model,
         max_new_tokens=args.max_new_tokens,
         temperature=args.temperature,
@@ -210,9 +243,10 @@ def main():
         batch_size=args.batch_size,
         num_candidates=args.num_candidates,
         save_midway=True,
+        original_inputs=raw_inputs,
     )
 
-    dump_records(args.output, inputs, responses)
+    dump_records(args.output, raw_inputs, responses)
 
 
 if __name__ == "__main__":
