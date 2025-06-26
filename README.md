@@ -29,11 +29,13 @@ Run the candidate generation script by providing your dataset file. For example,
 python generate_candidates.py train.json
 ```
 
-You can customize how prompts are formatted with the `--template` option. The
-template must contain a `{input}` placeholder which will be replaced with the
+You can customize how prompts are formatted with the `--template` (or
+`--prompt-prefix`) option. The template must contain a `{input}` placeholder
+which will be replaced with the prompt text. By default the template asks for a
+brief empathetic reply:
+You are an empathetic conversation partner. Keep your response brief. Reply to the following message:
 
-prompt text. By default the template is:
-
+python generate_candidates.py train.json --prompt-prefix "Human: {input}\nAssistant:"
 ```
 You are an empathetic conversation partner. Reply to the following message:
 {input}
