@@ -5,7 +5,6 @@ from typing import List, Optional
 from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 from datasets import Dataset
 import torch
-import os
 
 import torch._dynamo
 torch._dynamo.config.cache_size_limit = 256
