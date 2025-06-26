@@ -5,7 +5,6 @@ from typing import List, Optional
 from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 from datasets import Dataset
 import torch
-import os
 
 import torch._dynamo
 torch._dynamo.config.cache_size_limit = 256
@@ -134,6 +133,7 @@ def generate_responses(
                     result = result[len(prompt) :]
                 cands.append(result.strip())
             responses.append(cands)
+
             if save_midway and next_save < len(quarter_points) and idx == quarter_points[next_save]:
                 dump_records(
                     f"save{next_save + 1}.json",
@@ -141,6 +141,7 @@ def generate_responses(
                     responses,
                 )
                 next_save += 1
+
         if iterator:
             iterator.close()
     except TypeError:
@@ -178,6 +179,7 @@ def generate_responses(
                         result = result[len(prompt) :]
                     cands.append(result.strip())
                 responses.append(cands)
+
                 if save_midway and next_save < len(quarter_points) and idx == quarter_points[next_save]:
                     dump_records(
                         f"save{next_save + 1}.json",
@@ -185,6 +187,7 @@ def generate_responses(
                         responses,
                     )
                     next_save += 1
+
         if tqdm:
             batch_iterator.close()
     return responses
