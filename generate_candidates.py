@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 from typing import List, Optional
+import re
 
 from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 from datasets import Dataset
@@ -36,6 +37,26 @@ def dump_records(path: str, prompts: List[str], responses: List[List[str]]) -> N
 
     with open(path, "w", encoding="utf-8") as f:
         json.dump(records, f, ensure_ascii=False, indent=2)
+
+
+def sanitize_output(text: str) -> str:
+    """Clean model output and filter obvious junk.
+
+    Empty strings, markdown dividers (e.g. "***" or "```"), or extremely short
+    fragments are removed.  Returns the cleaned text or an empty string if the
+    output should be discarded.
+    """
+
+    text = text.strip()
+    # Remove lines that are purely punctuation/markdown symbols
+    if not text or re.fullmatch(r"[*`]+", text):
+        return ""
+
+    # Very short fragments are rarely useful
+    if len(text.split()) < 2:
+        return ""
+
+    return text
 
 
 def generate_responses(
@@ -101,6 +122,7 @@ def generate_responses(
         model=model,
         tokenizer=tokenizer,
         device=device,
+        return_full_text=False,
     )
 
     dataset = Dataset.from_dict({"text": inputs})
@@ -118,6 +140,7 @@ def generate_responses(
             temperature=temperature,
             top_p=top_p,
             num_return_sequences=num_candidates,
+            pad_token_id=tokenizer.eos_token_id,
         )
 
         iterator = tqdm(total=len(inputs), desc="generating") if tqdm else None
@@ -131,8 +154,10 @@ def generate_responses(
                 result = o["generated_text"]
                 if result.startswith(prompt):
                     result = result[len(prompt) :]
-                cands.append(result.strip())
-            responses.append(cands)
+                cleaned = sanitize_output(result)
+                if cleaned:
+                    cands.append(cleaned)
+            responses.append(list(dict.fromkeys(cands)))
 
             if save_midway and next_save < len(quarter_points) and idx == quarter_points[next_save]:
                 dump_records(
@@ -167,6 +192,7 @@ def generate_responses(
                 temperature=temperature,
                 top_p=top_p,
                 num_return_sequences=num_candidates,
+                pad_token_id=tokenizer.eos_token_id,
             )
             for prompt, out in zip(batch, outs):
                 idx += 1
@@ -177,8 +203,10 @@ def generate_responses(
                     result = o["generated_text"]
                     if result.startswith(prompt):
                         result = result[len(prompt) :]
-                    cands.append(result.strip())
-                responses.append(cands)
+                    cleaned = sanitize_output(result)
+                    if cleaned:
+                        cands.append(cleaned)
+                responses.append(list(dict.fromkeys(cands)))
 
                 if save_midway and next_save < len(quarter_points) and idx == quarter_points[next_save]:
                     dump_records(
