@@ -2,7 +2,7 @@
 
 This repository contains utilities for working with the Empathetic Dialogue dataset.
 
-- `generate_preference_dataset.py` scores the original and candidate responses with `deepseek-ai/DeepSeek-R1-Distill-Llama-8B` to create a preference dataset named `LLMprefer.json` containing `prompt`, `chosen`, and `reject` field
+- `generate_preference_dataset.py` scores the original and candidate responses with `deepseek-ai/DeepSeek-R1-Distill-Llama-8B` to create a preference dataset named `LLMprefer.json` containing `prompt`, `chosen`, and `reject` fields
 
 
 This project contains utilities for generating candidate responses for the Empathetic Dialogues dataset using Hugging Face models. The main script `generate_candidates.py` reads a `train.json` file containing conversation prompts and outputs a list of model generated replies.
