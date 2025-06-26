@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 from datasets import Dataset
@@ -8,7 +8,11 @@ import torch
 import os
 
 import torch._dynamo
-torch._dynamo.config.cache_size_limit = 256 
+torch._dynamo.config.cache_size_limit = 256
+
+DEFAULT_TEMPLATE = (
+    "You are an empathetic conversation partner. Reply to the following message:\n{input}\n"
+)
 
 try:
     from tqdm import tqdm
@@ -36,6 +40,8 @@ def dump_records(path: str, prompts: List[str], responses: List[List[str]]) -> N
 
 def generate_responses(
     inputs: List[str],
+    *,
+    original_inputs: Optional[List[str]] = None,
     model_name: str = "google/gemma-3-1b-it",
     max_new_tokens: int = 100,
     temperature: float = 0.7,
@@ -43,7 +49,6 @@ def generate_responses(
     use_bf16: bool = True,
     batch_size: int = 1,
     num_candidates: int = 3,
-    *,
     save_midway: bool = True,
 ) -> List[List[str]]:
     """Generate one or more responses for each input using the specified model.
@@ -52,6 +57,8 @@ def generate_responses(
     ----------
     inputs : List[str]
         Prompts to feed into the model.
+    original_inputs : Optional[List[str]], optional
+        If provided, the unformatted prompts used when saving progress mid-way.
     model_name : str, optional
         Model checkpoint to load.
     max_new_tokens : int, optional
@@ -123,7 +130,11 @@ def generate_responses(
                 cands.append(result.strip())
             responses.append(cands)
             if save_midway and not saved and idx == halfway:
-                dump_records("save.json", inputs[:idx], responses)
+                dump_records(
+                    "save.json",
+                    (original_inputs or inputs)[:idx],
+                    responses,
+                )
                 saved = True
         if iterator:
             iterator.close()
@@ -163,7 +174,11 @@ def generate_responses(
                     cands.append(result.strip())
                 responses.append(cands)
                 if save_midway and not saved and idx == halfway:
-                    dump_records("save.json", inputs[:idx], responses)
+                    dump_records(
+                        "save.json",
+                        (original_inputs or inputs)[:idx],
+                        responses,
+                    )
                     saved = True
         if tqdm:
             batch_iterator.close()
@@ -197,11 +212,17 @@ def main():
     )
     parser.add_argument("--batch-size", type=int, default=1, help="Batch size for generation")
     parser.add_argument("--num-candidates", type=int, default=3, help="Number of responses to generate per input")
+    parser.add_argument(
+        "--template",
+        default=DEFAULT_TEMPLATE,
+        help="Format string used to create the prompt; must contain '{input}'",
+    )
     args = parser.parse_args()
 
-    inputs = load_inputs(args.data)
+    raw_inputs = load_inputs(args.data)
+    prompts = [args.template.format(input=inp) for inp in raw_inputs]
     responses = generate_responses(
-        inputs,
+        prompts,
         model_name=args.model,
         max_new_tokens=args.max_new_tokens,
         temperature=args.temperature,
@@ -210,9 +231,10 @@ def main():
         batch_size=args.batch_size,
         num_candidates=args.num_candidates,
         save_midway=True,
+        original_inputs=raw_inputs,
     )
 
-    dump_records(args.output, inputs, responses)
+    dump_records(args.output, raw_inputs, responses)
 
 
 if __name__ == "__main__":
