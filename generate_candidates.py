@@ -10,7 +10,8 @@ import torch._dynamo
 torch._dynamo.config.cache_size_limit = 256
 
 DEFAULT_TEMPLATE = (
-    "You are an empathetic conversation partner. Reply briefly to the following message:\n{input}\n"
+    "You are an empathetic conversation partner. "
+    "Keep your response brief. Reply to the following message:\n{input}\n"
 )
 
 try:
@@ -218,6 +219,8 @@ def main():
     parser.add_argument("--num-candidates", type=int, default=3, help="Number of responses to generate per input")
     parser.add_argument(
         "--template",
+        "--prompt-prefix",
+        dest="template",
         default=DEFAULT_TEMPLATE,
         help="Format string used to create the prompt; must contain '{input}'",
     )
