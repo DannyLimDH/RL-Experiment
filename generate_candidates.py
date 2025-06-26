@@ -42,7 +42,7 @@ def generate_responses(
     *,
     original_inputs: Optional[List[str]] = None,
     model_name: str = "google/gemma-3-1b-it",
-    max_new_tokens: int = 100,
+    max_new_tokens: int = 40,
     temperature: float = 0.7,
     top_p: float = 0.9,
     use_bf16: bool = True,
@@ -201,7 +201,12 @@ def main():
         help="Where to write the candidate dataset",
     )
     parser.add_argument("--model", default="google/gemma-3-1b-it", help="Model to use for generation")
-    parser.add_argument("--max-new-tokens", type=int, default=100, help="Max tokens to generate")
+    parser.add_argument(
+        "--max-new-tokens",
+        type=int,
+        default=40,
+        help="Maximum tokens to generate for each reply",
+    )
     parser.add_argument("--temperature", type=float, default=0.7, help="Sampling temperature")
     parser.add_argument("--top-p", type=float, default=0.9, help="Top-p sampling")
     parser.add_argument(
