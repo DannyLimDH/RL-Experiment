@@ -12,7 +12,8 @@ torch._dynamo.config.cache_size_limit = 256
 
 DEFAULT_TEMPLATE = (
     "You are an empathetic conversation partner. "
-    "Keep your response brief. Reply to the following message:\n{input}\n"
+    "Below is the conversation so far. "
+    "Reply with what you would say next in one or two sentences.\n{input}\n"
 )
 
 try:
@@ -42,18 +43,31 @@ def dump_records(path: str, prompts: List[str], responses: List[List[str]]) -> N
 def sanitize_output(text: str) -> str:
     """Clean model output and filter obvious junk.
 
-    Empty strings, markdown dividers (e.g. "***" or "```"), or extremely short
-    fragments are removed.  Returns the cleaned text or an empty string if the
-    output should be discarded.
+    The Gemma model sometimes produces stray markdown or truncated fragments.
+    This helper strips common artifacts and returns an empty string if the
+    result does not look like a usable sentence.
     """
 
     text = text.strip()
-    # Remove lines that are purely punctuation/markdown symbols
-    if not text or re.fullmatch(r"[*`]+", text):
+    if not text:
+        return ""
+
+    # Remove code fences or divider lines
+    text = re.sub(r"```.*?```", "", text, flags=re.DOTALL).strip()
+    text = re.sub(r"^[\-*`#_=~]{2,}$", "", text, flags=re.MULTILINE).strip()
+
+    # Drop "Your response:" style prefixes
+    text = re.sub(r"(?i)^your response:\s*", "", text).strip()
+
+    # Collapse repeated blank lines
+    text = re.sub(r"\n{2,}", "\n", text)
+
+    # Discard if only symbols remain
+    if not text or re.fullmatch(r"[\-*`#_=~\s]+", text):
         return ""
 
     # Very short fragments are rarely useful
-    if len(text.split()) < 2:
+    if len(text.split()) < 3:
         return ""
 
     return text
