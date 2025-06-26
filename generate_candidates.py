@@ -73,6 +73,10 @@ def generate_responses(
         How many prompts to process at once.
     num_candidates : int, optional
         How many responses to generate for each prompt.
+    
+    If ``save_midway`` is True, partial results are saved to ``save1.json``,
+    ``save2.json``, and ``save3.json`` when 1/4, 1/2, and 3/4 of the prompts
+    have been processed.
     """
 
     tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -102,8 +106,8 @@ def generate_responses(
     dataset = Dataset.from_dict({"text": inputs})
 
     responses: List[List[str]] = []
-    halfway = len(inputs) // 2
-    saved = False
+    quarter_points = [len(inputs) * i // 4 for i in range(1, 4)]
+    next_save = 0
 
     try:
         outputs = generator(
@@ -129,13 +133,15 @@ def generate_responses(
                     result = result[len(prompt) :]
                 cands.append(result.strip())
             responses.append(cands)
-            if save_midway and not saved and idx == halfway:
+
+            if save_midway and next_save < len(quarter_points) and idx == quarter_points[next_save]:
                 dump_records(
-                    "save.json",
+                    f"save{next_save + 1}.json",
                     (original_inputs or inputs)[:idx],
                     responses,
                 )
-                saved = True
+                next_save += 1
+
         if iterator:
             iterator.close()
     except TypeError:
@@ -173,13 +179,15 @@ def generate_responses(
                         result = result[len(prompt) :]
                     cands.append(result.strip())
                 responses.append(cands)
-                if save_midway and not saved and idx == halfway:
+
+                if save_midway and next_save < len(quarter_points) and idx == quarter_points[next_save]:
                     dump_records(
-                        "save.json",
+                        f"save{next_save + 1}.json",
                         (original_inputs or inputs)[:idx],
                         responses,
                     )
-                    saved = True
+                    next_save += 1
+
         if tqdm:
             batch_iterator.close()
     return responses
