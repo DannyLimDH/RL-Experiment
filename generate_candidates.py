@@ -76,7 +76,7 @@ def sanitize_output(text: str) -> str:
         text = " ".join(sentences).strip()
     if not re.search(r"[.!?]$", text):
         text += "."
-
+        
     # Very short fragments are rarely useful
     if len(text.split()) < 3:
         return ""
