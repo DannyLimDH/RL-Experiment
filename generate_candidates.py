@@ -12,8 +12,10 @@ torch._dynamo.config.cache_size_limit = 256
 
 DEFAULT_TEMPLATE = (
     "You are an empathetic conversation partner. "
-    "Below is the conversation so far. "
-    "Reply with what you would say next in one or two sentences.\n{input}\n"
+    "Consider the user's intent — for example questioning, acknowledging, "
+    "consoling, agreeing, encouraging, sympathizing, suggesting, or wishing. "
+    "Respond appropriately in one or two short, complete sentences. "
+    "Here is the conversation so far:\n{input}\n"
 )
 
 try:
@@ -66,6 +68,15 @@ def sanitize_output(text: str) -> str:
     if not text or re.fullmatch(r"[\-*`#_=~\s]+", text):
         return ""
 
+    # Trim to at most two sentences
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    if len(sentences) > 2:
+        text = " ".join(sentences[:2]).strip()
+    else:
+        text = " ".join(sentences).strip()
+    if not re.search(r"[.!?]$", text):
+        text += "."
+        
     # Very short fragments are rarely useful
     if len(text.split()) < 3:
         return ""
