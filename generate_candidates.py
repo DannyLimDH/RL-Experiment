@@ -172,38 +172,37 @@ def generate_responses(
     iterator = tqdm(total=len(inputs), desc="generating") if tqdm else None
     idx = 0
 
-    if KeyDataset is not None and Dataset is not None:
-        data = Dataset.from_dict({"text": inputs})
-        output_iter = generator(
-            KeyDataset(data, "text"),
-            batch_size=batch_size,
-            max_new_tokens=max_new_tokens,
-            do_sample=True,
-            temperature=temperature,
-            top_p=top_p,
-            num_return_sequences=num_candidates,
-            pad_token_id=tokenizer.eos_token_id,
-        )
+    def batched_outputs():
+        """Yield model outputs in ``batch_size`` chunks.
 
-    else:  # fall back to sequential batches
-        def _iter():
-            for start in range(0, len(inputs), batch_size):
-                batch = inputs[start : start + batch_size]
-                outs = generator(
-                    batch,
-                    batch_size=len(batch),
-                    max_new_tokens=max_new_tokens,
-                    do_sample=True,
-                    temperature=temperature,
-                    top_p=top_p,
-                    num_return_sequences=num_candidates,
-                    pad_token_id=tokenizer.eos_token_id,
-                )
-                for o in outs:
-                    yield o
+        ``text-generation`` pipelines sometimes ignore the provided ``batch_size``
+        when iterating over a Dataset object. To ensure consistent batching we
+        split the prompts manually regardless of whether ``datasets`` is
+        installed. This avoids extremely slow one-by-one generation when the
+        pipeline disregards ``batch_size``.
+        """
 
-        output_iter = _iter()
+        for start in range(0, len(inputs), batch_size):
+            batch = inputs[start : start + batch_size]
+            outs = generator(
+                batch,
+                batch_size=len(batch),
+                max_new_tokens=max_new_tokens,
+                do_sample=True,
+                temperature=temperature,
+                top_p=top_p,
+                num_return_sequences=num_candidates,
+                pad_token_id=tokenizer.eos_token_id,
+            )
+            # ``transformers`` returns a flat list when batch size is 1
+            if len(batch) == 1 and not isinstance(outs[0], list):
+                outs = [outs]
+            for o in outs:
+                yield o
 
+    output_iter = batched_outputs()
+
+    missing = []
     for prompt, out in zip(inputs, output_iter):
         idx += 1
         if iterator:
@@ -211,7 +210,7 @@ def generate_responses(
         if not isinstance(out, list):
             out = [out]
 
-        cands = []
+        cands: List[str] = []
         for o in out:
             result = o["generated_text"]
             if result.startswith(prompt):
@@ -220,32 +219,10 @@ def generate_responses(
             if cleaned:
                 cands.append(cleaned)
 
-        uniq = list(dict.fromkeys(cands))
-
-        attempts = 0
-        while len(uniq) < num_candidates and attempts < 5:
-            needed = num_candidates - len(uniq)
-            more_out = generator(
-                prompt,
-                max_new_tokens=max_new_tokens,
-                do_sample=True,
-                temperature=temperature,
-                top_p=top_p,
-                num_return_sequences=needed,
-                pad_token_id=tokenizer.eos_token_id,
-            )
-            if not isinstance(more_out, list):
-                more_out = [more_out]
-            for o2 in more_out:
-                result = o2["generated_text"]
-                if result.startswith(prompt):
-                    result = result[len(prompt) :]
-                cleaned = sanitize_output(result)
-                if cleaned and cleaned not in uniq:
-                    uniq.append(cleaned)
-            attempts += 1
-
+        uniq = list(dict.fromkeys(cands))[:num_candidates]
         responses.append(uniq)
+        if len(uniq) < num_candidates:
+            missing.append(idx - 1)
 
         if save_midway and next_save < len(quarter_points) and idx == quarter_points[next_save]:
             dump_records(
@@ -257,6 +234,45 @@ def generate_responses(
 
     if iterator:
         iterator.close()
+
+    attempts = 0
+    while missing and attempts < 5:
+        prompts_batch = [inputs[i] for i in missing]
+        outs = generator(
+            prompts_batch,
+            batch_size=batch_size,
+            max_new_tokens=max_new_tokens,
+            do_sample=True,
+            temperature=temperature,
+            top_p=top_p,
+            num_return_sequences=num_candidates,
+            pad_token_id=tokenizer.eos_token_id,
+        )
+        if len(prompts_batch) == 1 and not isinstance(outs[0], list):
+            outs = [outs]
+
+        new_missing = []
+        for idx_m, out_list in zip(missing, outs):
+            if not isinstance(out_list, list):
+                out_list = [out_list]
+            for o in out_list:
+                result = o["generated_text"]
+                if result.startswith(inputs[idx_m]):
+                    result = result[len(inputs[idx_m]) :]
+                cleaned = sanitize_output(result)
+                if cleaned and cleaned not in responses[idx_m]:
+                    responses[idx_m].append(cleaned)
+                if len(responses[idx_m]) >= num_candidates:
+                    break
+            if len(responses[idx_m]) < num_candidates:
+                new_missing.append(idx_m)
+        missing = new_missing
+        attempts += 1
+
+    for resp in responses:
+        if len(resp) > num_candidates:
+            del resp[num_candidates:]
+
     return responses
 
 
