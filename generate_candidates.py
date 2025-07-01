@@ -161,40 +161,43 @@ def generate_responses(
     quarter_points = [len(inputs) * i // 4 for i in range(1, 4)]
     next_save = 0
 
-    outputs = generator(
-        inputs,
-        batch_size=batch_size,
-        max_new_tokens=max_new_tokens,
-        do_sample=True,
-        temperature=temperature,
-        top_p=top_p,
-        num_return_sequences=num_candidates,
-        pad_token_id=tokenizer.eos_token_id,
-    )
-
     iterator = tqdm(total=len(inputs), desc="generating") if tqdm else None
-    for idx, (prompt, out) in enumerate(zip(inputs, outputs), start=1):
-        if iterator:
-            iterator.update(1)
-        if not isinstance(out, list):
-            out = [out]
-        cands = []
-        for o in out:
-            result = o["generated_text"]
-            if result.startswith(prompt):
-                result = result[len(prompt) :]
-            cleaned = sanitize_output(result)
-            if cleaned:
-                cands.append(cleaned)
-        responses.append(list(dict.fromkeys(cands)))
+    idx = 0
+    for start in range(0, len(inputs), batch_size):
+        batch = inputs[start : start + batch_size]
+        outs = generator(
+            batch,
+            batch_size=len(batch),
+            max_new_tokens=max_new_tokens,
+            do_sample=True,
+            temperature=temperature,
+            top_p=top_p,
+            num_return_sequences=num_candidates,
+            pad_token_id=tokenizer.eos_token_id,
+        )
+        for prompt, out in zip(batch, outs):
+            idx += 1
+            if iterator:
+                iterator.update(1)
+            if not isinstance(out, list):
+                out = [out]
+            cands = []
+            for o in out:
+                result = o["generated_text"]
+                if result.startswith(prompt):
+                    result = result[len(prompt) :]
+                cleaned = sanitize_output(result)
+                if cleaned:
+                    cands.append(cleaned)
+            responses.append(list(dict.fromkeys(cands)))
 
-        if save_midway and next_save < len(quarter_points) and idx == quarter_points[next_save]:
-            dump_records(
-                f"save{next_save + 1}.json",
-                (original_inputs or inputs)[:idx],
-                responses,
-            )
-            next_save += 1
+            if save_midway and next_save < len(quarter_points) and idx == quarter_points[next_save]:
+                dump_records(
+                    f"save{next_save + 1}.json",
+                    (original_inputs or inputs)[:idx],
+                    responses,
+                )
+                next_save += 1
 
     if iterator:
         iterator.close()
