@@ -14,8 +14,8 @@ DEFAULT_TEMPLATE = (
     "You are an empathetic conversation partner. "
     "Consider the user's intent — for example questioning, acknowledging, "
     "consoling, agreeing, encouraging, sympathizing, suggesting, or wishing. "
-    "Respond appropriately in one or two short, complete sentences. "
-    "Here is the conversation so far:\n{input}\n"
+    "Reply to the latest user message in one or two concise sentences without "
+    "describing your own feelings. Here is the conversation so far:\n{input}\n"
 )
 
 try:
@@ -54,17 +54,25 @@ def sanitize_output(text: str) -> str:
     if not text:
         return ""
 
-    # Remove code fences or divider lines
-    text = re.sub(r"```.*?```", "", text, flags=re.DOTALL).strip()
-    text = re.sub(r"^[\-*`#_=~]{2,}$", "", text, flags=re.MULTILINE).strip()
+    # Remove code blocks and divider lines
+    text = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
+    text = re.sub(r"^[\-*`#_=~]{2,}$", "", text, flags=re.MULTILINE)
 
-    # Drop "Your response:" style prefixes
-    text = re.sub(r"(?i)^your response:\s*", "", text).strip()
+    # Drop common prefixes or markup
+    text = re.sub(r"(?i)^your response:\s*", "", text)
+    text = re.sub(r"^#+\s*", "", text)
 
-    # Collapse repeated blank lines
+    # Remove bullet characters and repeated punctuation
+    text = re.sub(r"^[\-*]\s+", "", text, flags=re.MULTILINE)
     text = re.sub(r"\n{2,}", "\n", text)
+    text = text.replace("\n", " ")
 
-    # Discard if only symbols remain
+    # Strip sign-offs or placeholders like [Your Name]
+    text = re.sub(r"\[.*?\]", "", text)
+    text = re.sub(r"(?i)(warmly|sincerely|best regards|regards),?", "", text)
+
+    text = text.strip()
+
     if not text or re.fullmatch(r"[\-*`#_=~\s]+", text):
         return ""
 
