@@ -66,6 +66,8 @@ def sanitize_output(text: str) -> str:
     # Drop common prefixes or markup
     text = re.sub(r"(?i)^your response:\s*", "", text)
     text = re.sub(r"^#+\s*", "", text)
+    text = re.sub(r"(?i)^\*?\s*user:?\s*", "", text)
+    text = re.sub(r"(?i)^\*?\s*assistant:?\s*", "", text)
 
     # Remove bullet characters and repeated punctuation
     text = re.sub(r"^[\-*]\s+", "", text, flags=re.MULTILINE)
@@ -209,25 +211,49 @@ def generate_responses(
         if not isinstance(out, list):
             out = [out]
 
-            if not isinstance(out, list):
-                out = [out]
-            cands = []
-            for o in out:
-                result = o["generated_text"]
+        cands = []
+        for o in out:
+            result = o["generated_text"]
+            if result.startswith(prompt):
+                result = result[len(prompt) :]
+            cleaned = sanitize_output(result)
+            if cleaned:
+                cands.append(cleaned)
+
+        uniq = list(dict.fromkeys(cands))
+
+        attempts = 0
+        while len(uniq) < num_candidates and attempts < 5:
+            needed = num_candidates - len(uniq)
+            more_out = generator(
+                prompt,
+                max_new_tokens=max_new_tokens,
+                do_sample=True,
+                temperature=temperature,
+                top_p=top_p,
+                num_return_sequences=needed,
+                pad_token_id=tokenizer.eos_token_id,
+            )
+            if not isinstance(more_out, list):
+                more_out = [more_out]
+            for o2 in more_out:
+                result = o2["generated_text"]
                 if result.startswith(prompt):
                     result = result[len(prompt) :]
                 cleaned = sanitize_output(result)
-                if cleaned:
-                    cands.append(cleaned)
-            responses.append(list(dict.fromkeys(cands)))
+                if cleaned and cleaned not in uniq:
+                    uniq.append(cleaned)
+            attempts += 1
 
-            if save_midway and next_save < len(quarter_points) and idx == quarter_points[next_save]:
-                dump_records(
-                    f"save{next_save + 1}.json",
-                    (original_inputs or inputs)[:idx],
-                    responses,
-                )
-                next_save += 1
+        responses.append(uniq)
+
+        if save_midway and next_save < len(quarter_points) and idx == quarter_points[next_save]:
+            dump_records(
+                f"save{next_save + 1}.json",
+                (original_inputs or inputs)[:idx],
+                responses,
+            )
+            next_save += 1
 
     if iterator:
         iterator.close()
