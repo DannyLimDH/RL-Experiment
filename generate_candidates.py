@@ -71,6 +71,7 @@ def sanitize_output(text: str) -> str:
     text = re.sub(r"(?i)(warmly|sincerely|best regards|regards),?", "", text)
 
     text = text.strip()
+
     if not text or re.fullmatch(r"[\-*`#_=~\s]+", text):
         return ""
 
