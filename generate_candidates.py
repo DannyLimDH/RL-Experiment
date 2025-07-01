@@ -84,7 +84,7 @@ def sanitize_output(text: str) -> str:
         text = " ".join(sentences).strip()
     if not re.search(r"[.!?]$", text):
         text += "."
-        
+
     # Very short fragments are rarely useful
     if len(text.split()) < 3:
         return ""
@@ -164,93 +164,43 @@ def generate_responses(
     quarter_points = [len(inputs) * i // 4 for i in range(1, 4)]
     next_save = 0
 
-    try:
-        outputs = generator(
-            dataset,
-            batch_size=batch_size,
-            max_new_tokens=max_new_tokens,
-            do_sample=True,
-            temperature=temperature,
-            top_p=top_p,
-            num_return_sequences=num_candidates,
-            pad_token_id=tokenizer.eos_token_id,
-        )
+    outputs = generator(
+        dataset,
+        batch_size=batch_size,
+        max_new_tokens=max_new_tokens,
+        do_sample=True,
+        temperature=temperature,
+        top_p=top_p,
+        num_return_sequences=num_candidates,
+        pad_token_id=tokenizer.eos_token_id,
+    )
 
-        iterator = tqdm(total=len(inputs), desc="generating") if tqdm else None
-        for idx, (prompt, out) in enumerate(zip(inputs, outputs), start=1):
-            if iterator:
-                iterator.update(1)
-            if not isinstance(out, list):
-                out = [out]
-            cands = []
-            for o in out:
-                result = o["generated_text"]
-                if result.startswith(prompt):
-                    result = result[len(prompt) :]
-                cleaned = sanitize_output(result)
-                if cleaned:
-                    cands.append(cleaned)
-            responses.append(list(dict.fromkeys(cands)))
-
-            if save_midway and next_save < len(quarter_points) and idx == quarter_points[next_save]:
-                dump_records(
-                    f"save{next_save + 1}.json",
-                    (original_inputs or inputs)[:idx],
-                    responses,
-                )
-                next_save += 1
-
+    iterator = tqdm(total=len(inputs), desc="generating") if tqdm else None
+    for idx, (prompt, out) in enumerate(zip(inputs, outputs), start=1):
         if iterator:
-            iterator.close()
-    except TypeError:
-        def batch_iter(seq, size):
-            for i in range(0, len(seq), size):
-                yield seq[i : i + size]
+            iterator.update(1)
+        if not isinstance(out, list):
+            out = [out]
+        cands = []
+        for o in out:
+            result = o["generated_text"]
+            if result.startswith(prompt):
+                result = result[len(prompt) :]
+            cleaned = sanitize_output(result)
+            if cleaned:
+                cands.append(cleaned)
+        responses.append(list(dict.fromkeys(cands)))
 
-        batch_iterator = batch_iter(inputs, batch_size)
-        if tqdm:
-            batch_iterator = tqdm(
-                batch_iterator,
-                desc="generating",
-                total=(len(inputs) + batch_size - 1) // batch_size,
-                unit="batch",
+        if save_midway and next_save < len(quarter_points) and idx == quarter_points[next_save]:
+            dump_records(
+                f"save{next_save + 1}.json",
+                (original_inputs or inputs)[:idx],
+                responses,
             )
+            next_save += 1
 
-        idx = 0
-        for batch in batch_iterator:
-            outs = generator(
-                batch,
-                max_new_tokens=max_new_tokens,
-                do_sample=True,
-                temperature=temperature,
-                top_p=top_p,
-                num_return_sequences=num_candidates,
-                pad_token_id=tokenizer.eos_token_id,
-            )
-            for prompt, out in zip(batch, outs):
-                idx += 1
-                if not isinstance(out, list):
-                    out = [out]
-                cands = []
-                for o in out:
-                    result = o["generated_text"]
-                    if result.startswith(prompt):
-                        result = result[len(prompt) :]
-                    cleaned = sanitize_output(result)
-                    if cleaned:
-                        cands.append(cleaned)
-                responses.append(list(dict.fromkeys(cands)))
-
-                if save_midway and next_save < len(quarter_points) and idx == quarter_points[next_save]:
-                    dump_records(
-                        f"save{next_save + 1}.json",
-                        (original_inputs or inputs)[:idx],
-                        responses,
-                    )
-                    next_save += 1
-
-        if tqdm:
-            batch_iterator.close()
+    if iterator:
+        iterator.close()
     return responses
 
 
