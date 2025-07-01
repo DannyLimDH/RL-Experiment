@@ -77,6 +77,7 @@ def sanitize_output(text: str) -> str:
     text = re.sub(r"(?i)(warmly|sincerely|best regards|regards),?", "", text)
 
     text = text.strip()
+
     if not text or re.fullmatch(r"[\-*`#_=~\s]+", text):
         return ""
 
@@ -181,6 +182,7 @@ def generate_responses(
             num_return_sequences=num_candidates,
             pad_token_id=tokenizer.eos_token_id,
         )
+
     else:  # fall back to sequential batches
         def _iter():
             for start in range(0, len(inputs), batch_size):
@@ -206,6 +208,7 @@ def generate_responses(
             iterator.update(1)
         if not isinstance(out, list):
             out = [out]
+
             if not isinstance(out, list):
                 out = [out]
             cands = []
