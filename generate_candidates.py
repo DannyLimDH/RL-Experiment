@@ -6,6 +6,12 @@ import re
 from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 import torch
 
+try:
+    from datasets import Dataset, KeyDataset
+except Exception:  # pragma: no cover - datasets is optional
+    Dataset = None  # type: ignore
+    KeyDataset = None  # type: ignore
+
 import torch._dynamo
 torch._dynamo.config.cache_size_limit = 256
 
@@ -163,11 +169,12 @@ def generate_responses(
 
     iterator = tqdm(total=len(inputs), desc="generating") if tqdm else None
     idx = 0
-    for start in range(0, len(inputs), batch_size):
-        batch = inputs[start : start + batch_size]
-        outs = generator(
-            batch,
-            batch_size=len(batch),
+
+    if KeyDataset is not None and Dataset is not None:
+        data = Dataset.from_dict({"text": inputs})
+        output_iter = generator(
+            KeyDataset(data, "text"),
+            batch_size=batch_size,
             max_new_tokens=max_new_tokens,
             do_sample=True,
             temperature=temperature,
@@ -175,10 +182,33 @@ def generate_responses(
             num_return_sequences=num_candidates,
             pad_token_id=tokenizer.eos_token_id,
         )
-        for prompt, out in zip(batch, outs):
-            idx += 1
-            if iterator:
-                iterator.update(1)
+
+    else:  # fall back to sequential batches
+        def _iter():
+            for start in range(0, len(inputs), batch_size):
+                batch = inputs[start : start + batch_size]
+                outs = generator(
+                    batch,
+                    batch_size=len(batch),
+                    max_new_tokens=max_new_tokens,
+                    do_sample=True,
+                    temperature=temperature,
+                    top_p=top_p,
+                    num_return_sequences=num_candidates,
+                    pad_token_id=tokenizer.eos_token_id,
+                )
+                for o in outs:
+                    yield o
+
+        output_iter = _iter()
+
+    for prompt, out in zip(inputs, output_iter):
+        idx += 1
+        if iterator:
+            iterator.update(1)
+        if not isinstance(out, list):
+            out = [out]
+
             if not isinstance(out, list):
                 out = [out]
             cands = []
