@@ -4,7 +4,6 @@ from typing import List, Optional
 import re
 
 from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
-from datasets import Dataset
 import torch
 
 import torch._dynamo
@@ -158,14 +157,12 @@ def generate_responses(
         return_full_text=False,
     )
 
-    dataset = Dataset.from_dict({"text": inputs})
-
     responses: List[List[str]] = []
     quarter_points = [len(inputs) * i // 4 for i in range(1, 4)]
     next_save = 0
 
     outputs = generator(
-        dataset,
+        inputs,
         batch_size=batch_size,
         max_new_tokens=max_new_tokens,
         do_sample=True,
