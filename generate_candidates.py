@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 from typing import List, Optional
+import re
 
 from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 from datasets import Dataset
@@ -11,7 +12,10 @@ torch._dynamo.config.cache_size_limit = 256
 
 DEFAULT_TEMPLATE = (
     "You are an empathetic conversation partner. "
-    "Keep your response brief. Reply to the following message:\n{input}\n"
+    "Consider the user's intent — for example questioning, acknowledging, "
+    "consoling, agreeing, encouraging, sympathizing, suggesting, or wishing. "
+    "Reply to the latest user message in one or two concise sentences without "
+    "describing your own feelings. Here is the conversation so far:\n{input}\n"
 )
 
 try:
@@ -36,6 +40,55 @@ def dump_records(path: str, prompts: List[str], responses: List[List[str]]) -> N
 
     with open(path, "w", encoding="utf-8") as f:
         json.dump(records, f, ensure_ascii=False, indent=2)
+
+
+def sanitize_output(text: str) -> str:
+    """Clean model output and filter obvious junk.
+
+    The Gemma model sometimes produces stray markdown or truncated fragments.
+    This helper strips common artifacts and returns an empty string if the
+    result does not look like a usable sentence.
+    """
+
+    text = text.strip()
+    if not text:
+        return ""
+
+    # Remove code blocks and divider lines
+    text = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
+    text = re.sub(r"^[\-*`#_=~]{2,}$", "", text, flags=re.MULTILINE)
+
+    # Drop common prefixes or markup
+    text = re.sub(r"(?i)^your response:\s*", "", text)
+    text = re.sub(r"^#+\s*", "", text)
+
+    # Remove bullet characters and repeated punctuation
+    text = re.sub(r"^[\-*]\s+", "", text, flags=re.MULTILINE)
+    text = re.sub(r"\n{2,}", "\n", text)
+    text = text.replace("\n", " ")
+
+    # Strip sign-offs or placeholders like [Your Name]
+    text = re.sub(r"\[.*?\]", "", text)
+    text = re.sub(r"(?i)(warmly|sincerely|best regards|regards),?", "", text)
+
+    text = text.strip()
+    if not text or re.fullmatch(r"[\-*`#_=~\s]+", text):
+        return ""
+
+    # Trim to at most two sentences
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    if len(sentences) > 2:
+        text = " ".join(sentences[:2]).strip()
+    else:
+        text = " ".join(sentences).strip()
+    if not re.search(r"[.!?]$", text):
+        text += "."
+
+    # Very short fragments are rarely useful
+    if len(text.split()) < 3:
+        return ""
+
+    return text
 
 
 def generate_responses(
@@ -101,6 +154,7 @@ def generate_responses(
         model=model,
         tokenizer=tokenizer,
         device=device,
+        return_full_text=False,
     )
 
     dataset = Dataset.from_dict({"text": inputs})
@@ -109,87 +163,43 @@ def generate_responses(
     quarter_points = [len(inputs) * i // 4 for i in range(1, 4)]
     next_save = 0
 
-    try:
-        outputs = generator(
-            dataset,
-            batch_size=batch_size,
-            max_new_tokens=max_new_tokens,
-            do_sample=True,
-            temperature=temperature,
-            top_p=top_p,
-            num_return_sequences=num_candidates,
-        )
+    outputs = generator(
+        dataset,
+        batch_size=batch_size,
+        max_new_tokens=max_new_tokens,
+        do_sample=True,
+        temperature=temperature,
+        top_p=top_p,
+        num_return_sequences=num_candidates,
+        pad_token_id=tokenizer.eos_token_id,
+    )
 
-        iterator = tqdm(total=len(inputs), desc="generating") if tqdm else None
-        for idx, (prompt, out) in enumerate(zip(inputs, outputs), start=1):
-            if iterator:
-                iterator.update(1)
-            if not isinstance(out, list):
-                out = [out]
-            cands = []
-            for o in out:
-                result = o["generated_text"]
-                if result.startswith(prompt):
-                    result = result[len(prompt) :]
-                cands.append(result.strip())
-            responses.append(cands)
-
-            if save_midway and next_save < len(quarter_points) and idx == quarter_points[next_save]:
-                dump_records(
-                    f"save{next_save + 1}.json",
-                    (original_inputs or inputs)[:idx],
-                    responses,
-                )
-                next_save += 1
-
+    iterator = tqdm(total=len(inputs), desc="generating") if tqdm else None
+    for idx, (prompt, out) in enumerate(zip(inputs, outputs), start=1):
         if iterator:
-            iterator.close()
-    except TypeError:
-        def batch_iter(seq, size):
-            for i in range(0, len(seq), size):
-                yield seq[i : i + size]
+            iterator.update(1)
+        if not isinstance(out, list):
+            out = [out]
+        cands = []
+        for o in out:
+            result = o["generated_text"]
+            if result.startswith(prompt):
+                result = result[len(prompt) :]
+            cleaned = sanitize_output(result)
+            if cleaned:
+                cands.append(cleaned)
+        responses.append(list(dict.fromkeys(cands)))
 
-        batch_iterator = batch_iter(inputs, batch_size)
-        if tqdm:
-            batch_iterator = tqdm(
-                batch_iterator,
-                desc="generating",
-                total=(len(inputs) + batch_size - 1) // batch_size,
-                unit="batch",
+        if save_midway and next_save < len(quarter_points) and idx == quarter_points[next_save]:
+            dump_records(
+                f"save{next_save + 1}.json",
+                (original_inputs or inputs)[:idx],
+                responses,
             )
+            next_save += 1
 
-        idx = 0
-        for batch in batch_iterator:
-            outs = generator(
-                batch,
-                max_new_tokens=max_new_tokens,
-                do_sample=True,
-                temperature=temperature,
-                top_p=top_p,
-                num_return_sequences=num_candidates,
-            )
-            for prompt, out in zip(batch, outs):
-                idx += 1
-                if not isinstance(out, list):
-                    out = [out]
-                cands = []
-                for o in out:
-                    result = o["generated_text"]
-                    if result.startswith(prompt):
-                        result = result[len(prompt) :]
-                    cands.append(result.strip())
-                responses.append(cands)
-
-                if save_midway and next_save < len(quarter_points) and idx == quarter_points[next_save]:
-                    dump_records(
-                        f"save{next_save + 1}.json",
-                        (original_inputs or inputs)[:idx],
-                        responses,
-                    )
-                    next_save += 1
-
-        if tqdm:
-            batch_iterator.close()
+    if iterator:
+        iterator.close()
     return responses
 
 
