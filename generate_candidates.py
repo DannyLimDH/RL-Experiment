@@ -172,37 +172,35 @@ def generate_responses(
     iterator = tqdm(total=len(inputs), desc="generating") if tqdm else None
     idx = 0
 
-    if KeyDataset is not None and Dataset is not None:
-        data = Dataset.from_dict({"text": inputs})
-        output_iter = generator(
-            KeyDataset(data, "text"),
-            batch_size=batch_size,
-            max_new_tokens=max_new_tokens,
-            do_sample=True,
-            temperature=temperature,
-            top_p=top_p,
-            num_return_sequences=num_candidates,
-            pad_token_id=tokenizer.eos_token_id,
-        )
+    def batched_outputs():
+        """Yield model outputs in ``batch_size`` chunks.
 
-    else:  # fall back to sequential batches
-        def _iter():
-            for start in range(0, len(inputs), batch_size):
-                batch = inputs[start : start + batch_size]
-                outs = generator(
-                    batch,
-                    batch_size=len(batch),
-                    max_new_tokens=max_new_tokens,
-                    do_sample=True,
-                    temperature=temperature,
-                    top_p=top_p,
-                    num_return_sequences=num_candidates,
-                    pad_token_id=tokenizer.eos_token_id,
-                )
-                for o in outs:
-                    yield o
+        ``text-generation`` pipelines sometimes ignore the provided ``batch_size``
+        when iterating over a Dataset object. To ensure consistent batching we
+        split the prompts manually regardless of whether ``datasets`` is
+        installed. This avoids extremely slow one-by-one generation when the
+        pipeline disregards ``batch_size``.
+        """
 
-        output_iter = _iter()
+        for start in range(0, len(inputs), batch_size):
+            batch = inputs[start : start + batch_size]
+            outs = generator(
+                batch,
+                batch_size=len(batch),
+                max_new_tokens=max_new_tokens,
+                do_sample=True,
+                temperature=temperature,
+                top_p=top_p,
+                num_return_sequences=num_candidates,
+                pad_token_id=tokenizer.eos_token_id,
+            )
+            # ``transformers`` returns a flat list when batch size is 1
+            if len(batch) == 1 and not isinstance(outs[0], list):
+                outs = [outs]
+            for o in outs:
+                yield o
+
+    output_iter = batched_outputs()
 
     missing = []
     for prompt, out in zip(inputs, output_iter):
