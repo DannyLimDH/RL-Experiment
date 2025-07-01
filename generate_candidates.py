@@ -72,6 +72,7 @@ def sanitize_output(text: str) -> str:
     text = re.sub(r"(?i)(warmly|sincerely|best regards|regards),?", "", text)
 
     text = text.strip()
+
     if not text or re.fullmatch(r"[\-*`#_=~\s]+", text):
         return ""
 
@@ -83,7 +84,7 @@ def sanitize_output(text: str) -> str:
         text = " ".join(sentences).strip()
     if not re.search(r"[.!?]$", text):
         text += "."
-
+        
     # Very short fragments are rarely useful
     if len(text.split()) < 3:
         return ""
