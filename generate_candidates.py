@@ -6,11 +6,6 @@ import re
 from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 import torch
 
-try:
-    from datasets import Dataset, KeyDataset
-except Exception:  # pragma: no cover - datasets is optional
-    Dataset = None  # type: ignore
-    KeyDataset = None  # type: ignore
 
 # ``torch._dynamo`` may not be available on older PyTorch versions. The
 # cache size tweak improves performance when present but should not crash the
