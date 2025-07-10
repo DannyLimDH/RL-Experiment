@@ -6,21 +6,22 @@ import re
 from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 import torch
 
-try:
-    from datasets import Dataset, KeyDataset
-except Exception:  # pragma: no cover - datasets is optional
-    Dataset = None  # type: ignore
-    KeyDataset = None  # type: ignore
 
-import torch._dynamo
-torch._dynamo.config.cache_size_limit = 256
+# ``torch._dynamo`` may not be available on older PyTorch versions. The
+# cache size tweak improves performance when present but should not crash the
+# script when running with a different installation.
+try:  # pragma: no cover - optional optimisation
+    import torch._dynamo
+    torch._dynamo.config.cache_size_limit = 256
+except Exception:
+    torch._dynamo = None  # type: ignore
 
 DEFAULT_TEMPLATE = (
     "You are an empathetic conversation partner. "
-    "Consider the user's intent — for example questioning, acknowledging, "
-    "consoling, agreeing, encouraging, sympathizing, suggesting, or wishing. "
-    "Reply to the latest user message in one or two concise sentences without "
-    "describing your own feelings. Here is the conversation so far:\n{input}\n"
+    "Read the entire chat below and continue the discussion with a short "
+    "reply to the final user message. Keep your answer to one or two concise "
+    "sentences, stay on topic, and do not include speaker labels such as "
+    "'User:' or 'Assistant:'.\n{input}\n"
 )
 
 try:
@@ -55,7 +56,7 @@ def sanitize_output(text: str) -> str:
     result does not look like a usable sentence.
     """
 
-    text = text.strip()
+    text = text.strip().strip("* `_")
     if not text:
         return ""
 
@@ -69,6 +70,9 @@ def sanitize_output(text: str) -> str:
     text = re.sub(r"(?i)^\*?\s*user:?\s*", "", text)
     text = re.sub(r"(?i)^\*?\s*assistant:?\s*", "", text)
 
+    # Remove leftover non-word characters that often follow a speaker label
+    text = re.sub(r"^\W+", "", text)
+
     # Remove bullet characters and repeated punctuation
     text = re.sub(r"^[\-*]\s+", "", text, flags=re.MULTILINE)
     text = re.sub(r"\n{2,}", "\n", text)
@@ -78,7 +82,10 @@ def sanitize_output(text: str) -> str:
     text = re.sub(r"\[.*?\]", "", text)
     text = re.sub(r"(?i)(warmly|sincerely|best regards|regards),?", "", text)
 
-    text = text.strip()
+    if re.search(r"(?i)\b(user|assistant|system):", text):
+        return ""
+
+    text = text.strip().strip("* `_")
 
     if not text or re.fullmatch(r"[\-*`#_=~\s]+", text):
         return ""
@@ -111,6 +118,7 @@ def generate_responses(
     batch_size: int = 1,
     num_candidates: int = 3,
     save_midway: bool = True,
+    seed: Optional[int] = None,
 ) -> List[List[str]]:
     """Generate one or more responses for each input using the specified model.
 
@@ -134,6 +142,8 @@ def generate_responses(
         How many prompts to process at once.
     num_candidates : int, optional
         How many responses to generate for each prompt.
+    seed : Optional[int], optional
+        If provided, sets the torch random seed for reproducible generation.
     
     If ``save_midway`` is True, partial results are saved to ``save1.json``,
     ``save2.json``, and ``save3.json`` when 1/4, 1/2, and 3/4 of the prompts
@@ -141,6 +151,9 @@ def generate_responses(
     """
 
     tokenizer = AutoTokenizer.from_pretrained(model_name)
+
+    if seed is not None:
+        torch.manual_seed(seed)
 
     if torch.cuda.is_available():
         torch.backends.cuda.matmul.allow_tf32 = True
@@ -201,8 +214,6 @@ def generate_responses(
                 yield o
 
     output_iter = batched_outputs()
-
-    missing = []
     for prompt, out in zip(inputs, output_iter):
         idx += 1
         if iterator:
@@ -221,8 +232,6 @@ def generate_responses(
 
         uniq = list(dict.fromkeys(cands))[:num_candidates]
         responses.append(uniq)
-        if len(uniq) < num_candidates:
-            missing.append(idx - 1)
 
         if save_midway and next_save < len(quarter_points) and idx == quarter_points[next_save]:
             dump_records(
@@ -234,40 +243,6 @@ def generate_responses(
 
     if iterator:
         iterator.close()
-
-    attempts = 0
-    while missing and attempts < 5:
-        prompts_batch = [inputs[i] for i in missing]
-        outs = generator(
-            prompts_batch,
-            batch_size=batch_size,
-            max_new_tokens=max_new_tokens,
-            do_sample=True,
-            temperature=temperature,
-            top_p=top_p,
-            num_return_sequences=num_candidates,
-            pad_token_id=tokenizer.eos_token_id,
-        )
-        if len(prompts_batch) == 1 and not isinstance(outs[0], list):
-            outs = [outs]
-
-        new_missing = []
-        for idx_m, out_list in zip(missing, outs):
-            if not isinstance(out_list, list):
-                out_list = [out_list]
-            for o in out_list:
-                result = o["generated_text"]
-                if result.startswith(inputs[idx_m]):
-                    result = result[len(inputs[idx_m]) :]
-                cleaned = sanitize_output(result)
-                if cleaned and cleaned not in responses[idx_m]:
-                    responses[idx_m].append(cleaned)
-                if len(responses[idx_m]) >= num_candidates:
-                    break
-            if len(responses[idx_m]) < num_candidates:
-                new_missing.append(idx_m)
-        missing = new_missing
-        attempts += 1
 
     for resp in responses:
         if len(resp) > num_candidates:
@@ -309,6 +284,12 @@ def main():
     parser.add_argument("--batch-size", type=int, default=1, help="Batch size for generation")
     parser.add_argument("--num-candidates", type=int, default=3, help="Number of responses to generate per input")
     parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Random seed for deterministic generation",
+    )
+    parser.add_argument(
         "--template",
         "--prompt-prefix",
         dest="template",
@@ -329,6 +310,7 @@ def main():
         batch_size=args.batch_size,
         num_candidates=args.num_candidates,
         save_midway=True,
+        seed=args.seed,
         original_inputs=raw_inputs,
     )
 
