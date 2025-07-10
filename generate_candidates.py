@@ -214,8 +214,6 @@ def generate_responses(
                 yield o
 
     output_iter = batched_outputs()
-
-    missing = []
     for prompt, out in zip(inputs, output_iter):
         idx += 1
         if iterator:
@@ -234,8 +232,6 @@ def generate_responses(
 
         uniq = list(dict.fromkeys(cands))[:num_candidates]
         responses.append(uniq)
-        if len(uniq) < num_candidates:
-            missing.append(idx - 1)
 
         if save_midway and next_save < len(quarter_points) and idx == quarter_points[next_save]:
             dump_records(
@@ -247,40 +243,6 @@ def generate_responses(
 
     if iterator:
         iterator.close()
-
-    attempts = 0
-    while missing and attempts < 5:
-        prompts_batch = [inputs[i] for i in missing]
-        outs = generator(
-            prompts_batch,
-            batch_size=batch_size,
-            max_new_tokens=max_new_tokens,
-            do_sample=True,
-            temperature=temperature,
-            top_p=top_p,
-            num_return_sequences=num_candidates,
-            pad_token_id=tokenizer.eos_token_id,
-        )
-        if len(prompts_batch) == 1 and not isinstance(outs[0], list):
-            outs = [outs]
-
-        new_missing = []
-        for idx_m, out_list in zip(missing, outs):
-            if not isinstance(out_list, list):
-                out_list = [out_list]
-            for o in out_list:
-                result = o["generated_text"]
-                if result.startswith(inputs[idx_m]):
-                    result = result[len(inputs[idx_m]) :]
-                cleaned = sanitize_output(result)
-                if cleaned and cleaned not in responses[idx_m]:
-                    responses[idx_m].append(cleaned)
-                if len(responses[idx_m]) >= num_candidates:
-                    break
-            if len(responses[idx_m]) < num_candidates:
-                new_missing.append(idx_m)
-        missing = new_missing
-        attempts += 1
 
     for resp in responses:
         if len(resp) > num_candidates:
