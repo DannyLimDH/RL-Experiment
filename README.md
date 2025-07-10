@@ -32,13 +32,18 @@ python generate_candidates.py train.json
 You can customize how prompts are formatted with the `--template` (or
 `--prompt-prefix`) option. The template must contain a `{input}` placeholder
 which will be replaced with the prompt text. By default the template instructs
-the model to continue the conversation with a short empathetic reply:
+the model to analyze the user's intent and continue the conversation with a
+short empathetic reply:
 
 ```
-You are an empathetic conversation partner. Read the chat and reply to the last user message in one or two short sentences without speaker labels.
+You are an empathetic conversation partner. Consider the user's intent—whether
+they are questioning, acknowledging, consoling, agreeing, encouraging,
+sympathizing, suggesting, or wishing—and respond appropriately. Read the chat
+and reply to the last user message in one or two short sentences without speaker
+labels.
+
 {input}
 ```
-
 ```bash
 python generate_candidates.py train.json --template "Human: {input}\nAssistant:"
 python generate_candidates.py train.json --prompt-prefix "Human: {input}\nAssistant:"

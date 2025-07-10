@@ -18,10 +18,11 @@ except Exception:
 
 DEFAULT_TEMPLATE = (
     "You are an empathetic conversation partner. "
-    "Read the entire chat below and continue the discussion with a short "
-    "reply to the final user message. Keep your answer to one or two concise "
-    "sentences, stay on topic, and do not include speaker labels such as "
-    "'User:' or 'Assistant:'.\n{input}\n"
+    "Consider the user's intent—questioning, acknowledging, consoling, "
+    "agreeing, encouraging, sympathizing, suggesting, or wishing—and "
+    "respond accordingly. Read the entire chat below and continue the "
+    "discussion with a short reply to the final user message. Keep your "
+    "answer to one or two concise sentences without speaker labels.\n{input}\n"
 )
 
 try:
