@@ -18,10 +18,10 @@ except Exception:
 
 DEFAULT_TEMPLATE = (
     "You are an empathetic conversation partner. "
-    "Consider the user's intent — for example questioning, acknowledging, "
-    "consoling, agreeing, encouraging, sympathizing, suggesting, or wishing. "
-    "Reply to the latest user message in one or two concise sentences without "
-    "describing your own feelings. Here is the conversation so far:\n{input}\n"
+    "Read the entire chat below and continue the discussion with a short "
+    "reply to the final user message. Keep your answer to one or two concise "
+    "sentences, stay on topic, and do not include speaker labels such as "
+    "'User:' or 'Assistant:'.\n{input}\n"
 )
 
 try:
@@ -56,7 +56,7 @@ def sanitize_output(text: str) -> str:
     result does not look like a usable sentence.
     """
 
-    text = text.strip()
+    text = text.strip().strip("* `_")
     if not text:
         return ""
 
@@ -70,6 +70,9 @@ def sanitize_output(text: str) -> str:
     text = re.sub(r"(?i)^\*?\s*user:?\s*", "", text)
     text = re.sub(r"(?i)^\*?\s*assistant:?\s*", "", text)
 
+    # Remove leftover non-word characters that often follow a speaker label
+    text = re.sub(r"^\W+", "", text)
+
     # Remove bullet characters and repeated punctuation
     text = re.sub(r"^[\-*]\s+", "", text, flags=re.MULTILINE)
     text = re.sub(r"\n{2,}", "\n", text)
@@ -79,7 +82,10 @@ def sanitize_output(text: str) -> str:
     text = re.sub(r"\[.*?\]", "", text)
     text = re.sub(r"(?i)(warmly|sincerely|best regards|regards),?", "", text)
 
-    text = text.strip()
+    if re.search(r"(?i)\b(user|assistant|system):", text):
+        return ""
+
+    text = text.strip().strip("* `_")
 
     if not text or re.fullmatch(r"[\-*`#_=~\s]+", text):
         return ""

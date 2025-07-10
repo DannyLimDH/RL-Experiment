@@ -31,11 +31,11 @@ python generate_candidates.py train.json
 
 You can customize how prompts are formatted with the `--template` (or
 `--prompt-prefix`) option. The template must contain a `{input}` placeholder
-which will be replaced with the prompt text. By default the template asks for a
-brief empathetic reply:
+which will be replaced with the prompt text. By default the template instructs
+the model to continue the conversation with a short empathetic reply:
 
 ```
-You are an empathetic conversation partner. Keep your response brief. Reply to the following message:
+You are an empathetic conversation partner. Read the chat and reply to the last user message in one or two short sentences without speaker labels.
 {input}
 ```
 
