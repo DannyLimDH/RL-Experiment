@@ -41,6 +41,7 @@ they are questioning, acknowledging, consoling, agreeing, encouraging,
 sympathizing, suggesting, or wishing—and respond appropriately. Read the chat
 and reply to the last user message in one or two short sentences without speaker
 labels.
+
 {input}
 ```
 ```bash
