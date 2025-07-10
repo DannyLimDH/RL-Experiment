@@ -6,14 +6,15 @@ import re
 from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 import torch
 
-try:
-    from datasets import Dataset, KeyDataset
-except Exception:  # pragma: no cover - datasets is optional
-    Dataset = None  # type: ignore
-    KeyDataset = None  # type: ignore
 
-import torch._dynamo
-torch._dynamo.config.cache_size_limit = 256
+# ``torch._dynamo`` may not be available on older PyTorch versions. The
+# cache size tweak improves performance when present but should not crash the
+# script when running with a different installation.
+try:  # pragma: no cover - optional optimisation
+    import torch._dynamo
+    torch._dynamo.config.cache_size_limit = 256
+except Exception:
+    torch._dynamo = None  # type: ignore
 
 DEFAULT_TEMPLATE = (
     "You are an empathetic conversation partner. "
@@ -111,6 +112,7 @@ def generate_responses(
     batch_size: int = 1,
     num_candidates: int = 3,
     save_midway: bool = True,
+    seed: Optional[int] = None,
 ) -> List[List[str]]:
     """Generate one or more responses for each input using the specified model.
 
@@ -134,6 +136,8 @@ def generate_responses(
         How many prompts to process at once.
     num_candidates : int, optional
         How many responses to generate for each prompt.
+    seed : Optional[int], optional
+        If provided, sets the torch random seed for reproducible generation.
     
     If ``save_midway`` is True, partial results are saved to ``save1.json``,
     ``save2.json``, and ``save3.json`` when 1/4, 1/2, and 3/4 of the prompts
@@ -141,6 +145,9 @@ def generate_responses(
     """
 
     tokenizer = AutoTokenizer.from_pretrained(model_name)
+
+    if seed is not None:
+        torch.manual_seed(seed)
 
     if torch.cuda.is_available():
         torch.backends.cuda.matmul.allow_tf32 = True
@@ -309,6 +316,12 @@ def main():
     parser.add_argument("--batch-size", type=int, default=1, help="Batch size for generation")
     parser.add_argument("--num-candidates", type=int, default=3, help="Number of responses to generate per input")
     parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Random seed for deterministic generation",
+    )
+    parser.add_argument(
         "--template",
         "--prompt-prefix",
         dest="template",
@@ -329,6 +342,7 @@ def main():
         batch_size=args.batch_size,
         num_candidates=args.num_candidates,
         save_midway=True,
+        seed=args.seed,
         original_inputs=raw_inputs,
     )
 
