@@ -17,18 +17,20 @@ except Exception:
     torch._dynamo = None  # type: ignore
 
 DEFAULT_TEMPLATE = (
-    "You are a skilled empathetic conversation partner with deep emotional intelligence.\n\n"
-    "CONTEXT ANALYSIS:\n"
-    "- Identify the user's emotional state (happy, sad, anxious, frustrated, excited, etc.)\n"
-    "- Recognize their primary intent: questioning, acknowledging, consoling, agreeing, encouraging, sympathizing, suggesting, or wishing\n"
-    "- Consider the relationship dynamics and conversation history\n\n"
-    "RESPONSE GUIDELINES:\n"
-    "- Match the user's emotional tone while providing appropriate support\n"
-    "- Use validation techniques: \"I can understand why you'd feel that way\"\n"
-    "- Offer perspective when helpful, but avoid minimizing their feelings\n"
-    "- Keep responses natural, warm, and human-like\n"
-    "- Limit to 1-2 sentences without speaker labels\n\n"
-    "Here is the conversation so far:\n{input}\n"
+    "You are in a conversation with someone. They just said something to you. "
+    "Respond naturally - you might ask a question, acknowledge their feelings, "
+    "console them, agree with them, encourage them, sympathize, suggest something, "
+    "or wish them well.\n\n"
+    "CRITICAL: Write ONLY your conversational response. "
+    "Do NOT include any labels, formatting, or analysis.\n\n"
+    "Example of what NOT to do:\n"
+    "- 'Your Response:** That sounds hard.'\n"
+    "- '**Analysis:** The user seems sad.'\n\n"
+    "Example of what TO do:\n"
+    "- 'That sounds really hard. How are you coping with it?'\n"
+    "- 'I can understand why you'd feel that way.'\n\n"
+    "Keep it natural and brief (1-2 sentences).\n\n"
+    "{input}\n"
 )
 
 try:
@@ -56,61 +58,124 @@ def dump_records(path: str, prompts: List[str], responses: List[List[str]]) -> N
 
 
 def sanitize_output(text: str) -> str:
-    """Clean model output and filter obvious junk.
-
-    The Gemma model sometimes produces stray markdown or truncated fragments.
-    This helper strips common artifacts and returns an empty string if the
-    result does not look like a usable sentence.
-    """
+    """Clean model output and filter obvious junk."""
 
     text = text.strip().strip("* `_")
     if not text:
         return ""
 
-    # Remove code blocks and divider lines
-    text = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
-    text = re.sub(r"^[\-*`#_=~]{2,}$", "", text, flags=re.MULTILINE)
+    # Remove any response labels or formatting
+    label_patterns = [
+        r"^.*?Response\*\*:?:\s*",
+        r"^.*?Analysis\*\*:?:\s*",
+        r"^.*?Output\*\*:?:\s*",
+        r"^.*?Answer\*\*:?:\s*",
+        r"^\*\*.*?\*\*:?:\s*",
+        r"^Your\s+Response\*\*.*?:?\s*",
+        r"^Response\*\*.*?:?\s*",
+        r"^\*\*Your\s+Response\*\*.*?:?\s*",
+    ]
 
-    # Drop common prefixes or markup
-    text = re.sub(r"(?i)^your response:\s*", "", text)
+    for pattern in label_patterns:
+        text = re.sub(pattern, "", text, flags=re.IGNORECASE)
+
+    # Remove any remaining bold formatting
+    text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
+
+    # Remove analysis-style language
+    analytical_phrases = [
+        "emotional state",
+        "primary intent",
+        "context analysis",
+        "let's analyze",
+        "based on this conversation",
+        "the user appears",
+        "relationship dynamics",
+        "conversation history",
+        "assessment",
+        "emotional tone",
+        "primary goal",
+        "intent recognition",
+    ]
+
+    text_lower = text.lower()
+    if any(phrase in text_lower for phrase in analytical_phrases):
+        return ""
+
+    # Remove structured formatting
+    text = re.sub(r"^\s*[-*•]\s*", "", text)
     text = re.sub(r"^#+\s*", "", text)
-    text = re.sub(r"(?i)^\*?\s*user:?\s*", "", text)
-    text = re.sub(r"(?i)^\*?\s*assistant:?\s*", "", text)
 
-    # Remove leftover non-word characters that often follow a speaker label
-    text = re.sub(r"^\W+", "", text)
-
-    # Remove bullet characters and repeated punctuation
-    text = re.sub(r"^[\-*]\s+", "", text, flags=re.MULTILINE)
-    text = re.sub(r"\n{2,}", "\n", text)
-    text = text.replace("\n", " ")
-
-    # Strip sign-offs or placeholders like [Your Name]
-    text = re.sub(r"\[.*?\]", "", text)
-    text = re.sub(r"(?i)(warmly|sincerely|best regards|regards),?", "", text)
-
-    if re.search(r"(?i)\b(user|assistant|system):", text):
+    # Remove incomplete responses
+    if text.endswith(":**") or text.endswith("**") or text.endswith(":"):
         return ""
 
-    text = text.strip().strip("* `_")
+    # Clean up extra whitespace
+    text = re.sub(r"\s+", " ", text)
+    text = text.strip()
 
-    if not text or re.fullmatch(r"[\-*`#_=~\s]+", text):
+    # Ensure natural sentence ending
+    if text and not re.search(r"[.!?]$", text):
+        text = text + "."
+
+    # Filter out very short or very long responses
+    if len(text.split()) < 3 or len(text.split()) > 30:
         return ""
 
-    # Trim to at most two sentences
-    sentences = re.split(r"(?<=[.!?])\s+", text)
-    if len(sentences) > 2:
-        text = " ".join(sentences[:2]).strip()
-    else:
-        text = " ".join(sentences).strip()
-    if not re.search(r"[.!?]$", text):
-        text += "."
-
-    # Very short fragments are rarely useful
-    if len(text.split()) < 3:
+    # Check if it looks like a natural conversational response
+    if not text or re.fullmatch(r"[\-*`#_=~\s.!?]+", text):
         return ""
 
     return text
+
+
+def is_natural_conversation(text: str) -> bool:
+    """Check if the response sounds like natural conversation."""
+
+    # Reject responses with labels
+    if re.search(r"(response|analysis|output|answer)\s*\*\*", text, re.IGNORECASE):
+        return False
+
+    # Reject responses with analytical language
+    analytical_terms = [
+        "emotional state",
+        "primary intent",
+        "user appears",
+        "based on this",
+        "let's analyze",
+        "assessment",
+        "emotional tone",
+        "relationship dynamics",
+    ]
+
+    if any(term in text.lower() for term in analytical_terms):
+        return False
+
+    # Prefer responses that sound conversational
+    conversational_indicators = [
+        "?",
+        "that sounds",
+        "how",
+        "what",
+        "why",
+        "tell me",
+        "i can",
+        "you seem",
+        "it feels",
+        "i understand",
+        "wow",
+        "oh",
+    ]
+
+    if any(indicator in text.lower() for indicator in conversational_indicators):
+        return True
+
+    # Check length (natural conversations are usually brief)
+    word_count = len(text.split())
+    if 3 <= word_count <= 25:
+        return True
+
+    return False
 
 
 def generate_responses(
@@ -234,7 +299,7 @@ def generate_responses(
             if result.startswith(prompt):
                 result = result[len(prompt) :]
             cleaned = sanitize_output(result)
-            if cleaned:
+            if cleaned and is_natural_conversation(cleaned):
                 cands.append(cleaned)
 
         uniq = list(dict.fromkeys(cands))[:num_candidates]
