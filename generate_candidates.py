@@ -16,22 +16,61 @@ try:  # pragma: no cover - optional optimisation
 except Exception:
     torch._dynamo = None  # type: ignore
 
-DEFAULT_TEMPLATE = (
-    "You are in a conversation with someone. They just said something to you. "
-    "Respond naturally - you might ask a question, acknowledge their feelings, "
-    "console them, agree with them, encourage them, sympathize, suggest something, "
-    "or wish them well.\n\n"
-    "CRITICAL: Write ONLY your conversational response. "
-    "Do NOT include any labels, formatting, or analysis.\n\n"
-    "Example of what NOT to do:\n"
-    "- 'Your Response:** That sounds hard.'\n"
-    "- '**Analysis:** The user seems sad.'\n\n"
-    "Example of what TO do:\n"
-    "- 'That sounds really hard. How are you coping with it?'\n"
-    "- 'I can understand why you'd feel that way.'\n\n"
-    "Keep it natural and brief (1-2 sentences).\n\n"
-    "{input}\n"
+COMMON_INSTRUCTIONS = (
+    "- Keep your response concise (1\u20132 sentences)\n"
+    "- Reflect at least one key word or emotion from the input\n"
+    "- Avoid generic clich\u00e9s (e.g. \u201cOh wow,\u201d \u201cThat\u2019s beautiful\u201d)\n"
+    "- When asking questions, start with open\u2011ended words like \u201cwhy,\u201d \u201chow,\u201d or \u201cwhat\u201d\n"
 )
+
+EMOTION_ROUTING = (
+    "1. Read the user\u2019s message and identify its primary emotion: sadness, anger, anxiety, neutral, or joy.\n"
+    "2. Map that emotion to a response style:\n"
+    "   \u2022 Empathy  \u2192 for sadness, anger, anxiety\n"
+    "   \u2022 Curiosity \u2192 for neutral\n"
+    "   \u2022 Encouragement \u2192 for joy\n"
+    "3. Use the corresponding template below to generate your reply.\n"
+)
+
+ENHANCED_TEMPLATES = {
+    "Empathy": (
+        COMMON_INSTRUCTIONS +
+        "Detect the emotion and offer a single, heartfelt empathetic comment.\n"
+        "Input: \"{input}\"\n"
+        "Example: \"That sounds really overwhelming. I can understand how you feel.\"\n"
+        "Your response:"
+    ),
+    "Curiosity": (
+        COMMON_INSTRUCTIONS +
+        "Maintain a neutral, factual tone and ask an open\u2011ended follow\u2011up question.\n"
+        "Input: \"{input}\"\n"
+        "Example: \"What about that experience stood out to you the most?\"\n"
+        "Your response:"
+    ),
+    "Encouragement": (
+        COMMON_INSTRUCTIONS +
+        "Use positive language and, if appropriate, offer a simple next step to encourage the speaker.\n"
+        "Input: \"{input}\"\n"
+        "Example: \"You\u2019re doing great. Maybe you could try breaking it down into smaller steps next time.\"\n"
+        "Your response:"
+    ),
+}
+
+OVERALL_PROMPT = (
+    EMOTION_ROUTING +
+    "\n" +
+    "# Available styles and their templates:\n"+
+    "\u2022 Empathy\n"+
+    "\u2022 Curiosity\n"+
+    "\u2022 Encouragement\n\n"+
+    "Now generate your response:\n\n"+
+    "User message: \"{input}\"\n"+
+    "Chosen emotion: {emotion}\n"+
+    "Chosen style: {style}\n"+
+    "{ENHANCED_TEMPLATES[style]}"
+)
+
+DEFAULT_TEMPLATE = OVERALL_PROMPT
 
 try:
     from tqdm import tqdm
@@ -182,7 +221,7 @@ def generate_responses(
     inputs: List[str],
     *,
     original_inputs: Optional[List[str]] = None,
-    model_name: str = "google/gemma-3-1b-it",
+    model_name: str = "google/gemma-3-4b-it",
     max_new_tokens: int = 40,
     temperature: float = 0.7,
     top_p: float = 0.9,
@@ -339,7 +378,7 @@ def main():
         default="candidate.json",
         help="Where to write the candidate dataset",
     )
-    parser.add_argument("--model", default="google/gemma-3-1b-it", help="Model to use for generation")
+    parser.add_argument("--model", default="google/gemma-3-4b-it", help="Model to use for generation")
     parser.add_argument(
         "--max-new-tokens",
         type=int,
@@ -366,12 +405,12 @@ def main():
         "--prompt-prefix",
         dest="template",
         default=DEFAULT_TEMPLATE,
-        help="Format string used to create the prompt; must contain '{input}'",
+        help="Template used to create the prompt; must contain '{input}'",
     )
     args = parser.parse_args()
 
     raw_inputs = load_inputs(args.data)
-    prompts = [args.template.format(input=inp) for inp in raw_inputs]
+    prompts = [args.template.replace("{input}", inp) for inp in raw_inputs]
     responses = generate_responses(
         prompts,
         model_name=args.model,
